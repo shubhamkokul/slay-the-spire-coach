@@ -145,9 +145,9 @@ func Detect(prev, curr GameState, currRaw json.RawMessage) *Trigger {
 		return nil
 	}
 
-	// New round = fresh hand dealt
-	if curr.Battle.Round != prev.Battle.Round {
-		return &Trigger{Reason: "new combat round", State: curr, Raw: currRaw}
+	// Hand just arrived — cards went from empty to populated (covers both first round and new rounds)
+	if len(prev.Player.Hand) == 0 && len(curr.Player.Hand) > 0 {
+		return &Trigger{Reason: "cards dealt", State: curr, Raw: currRaw}
 	}
 
 	// Enemy intent changed mid-round

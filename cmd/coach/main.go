@@ -56,7 +56,6 @@ func main() {
 	var lastAdvisedHash string
 	var lastCall time.Time
 	var lastWaiting time.Time
-	var stateTypeChangedAt time.Time
 	first := true
 
 	ticker := time.NewTicker(*interval)
@@ -121,13 +120,6 @@ func main() {
 
 			if trigger == nil {
 				continue
-			}
-
-			if trigger.Reason == "hand changed" && time.Since(stateTypeChangedAt) < 10*time.Second {
-				continue
-			}
-			if trigger.Reason != "hand changed" {
-				stateTypeChangedAt = time.Now()
 			}
 
 			advise(trigger, false)
