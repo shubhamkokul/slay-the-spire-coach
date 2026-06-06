@@ -214,31 +214,13 @@ func SystemQuestion() string {
 }
 
 func BuildQuestion(question string, gs state.GameState, raw json.RawMessage) string {
-	relics := make([]string, len(gs.Player.Relics))
-	for i, r := range gs.Player.Relics {
-		relics[i] = r.Name
+	var gameData string
+	if state.IsCombat(gs.StateType) {
+		gameData = buildCombatCompact(gs)
+	} else {
+		gameData = buildNonCombatCompact(gs, raw)
 	}
-
-	deck := make([]string, 0, len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
-	for _, c := range gs.Player.DrawPile {
-		deck = append(deck, c.Name)
-	}
-	for _, c := range gs.Player.DiscardPile {
-		deck = append(deck, c.Name)
-	}
-
-	ctx := fmt.Sprintf(
-		"Character: %s | Act %d Floor %d | HP %d/%d | Gold %d\nRelics: %s\nDeck: %s\nCurrent screen: %s",
-		gs.Player.Character,
-		gs.Run.Act, gs.Run.Floor,
-		gs.Player.HP, gs.Player.MaxHP,
-		gs.Player.Gold,
-		strings.Join(relics, ", "),
-		strings.Join(deck, ", "),
-		gs.StateType,
-	)
-
-	return fmt.Sprintf("Question: %s\n\nGame state:\n%s", question, ctx)
+	return fmt.Sprintf("Question: %s\n\nCurrent game state:\n%s", question, gameData)
 }
 
 func Build(trigger *state.Trigger) string {
