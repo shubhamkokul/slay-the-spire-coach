@@ -60,6 +60,7 @@ type compactCombat struct {
 	MaxHP         int             `json:"max_hp"`
 	Block         int             `json:"block"`
 	Hand          []compactCard   `json:"hand"`
+	Deck          []string        `json:"deck,omitempty"`
 	Powers        []compactPower  `json:"powers,omitempty"`
 	Relics        []string        `json:"relics"`
 	Potions       []compactPotion `json:"potions,omitempty"`
@@ -153,11 +154,19 @@ func buildCombatCompact(gs state.GameState) string {
 		orbs[i] = compactOrb{Name: o.Name, Passive: o.PassiveVal, Evoke: o.EvokeVal}
 	}
 
+	deck := make([]string, 0, len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
+	for _, c := range gs.Player.DrawPile {
+		deck = append(deck, c.Name)
+	}
+	for _, c := range gs.Player.DiscardPile {
+		deck = append(deck, c.Name)
+	}
+
 	b, _ := json.Marshal(compactCombat{
 		Act: gs.Run.Act, Floor: gs.Run.Floor,
 		Energy: gs.Player.Energy, MaxEnergy: gs.Player.MaxEnergy,
 		HP: gs.Player.HP, MaxHP: gs.Player.MaxHP, Block: gs.Player.Block,
-		Hand: hand, Powers: powers, Relics: relics, Potions: potions,
+		Hand: hand, Deck: deck, Powers: powers, Relics: relics, Potions: potions,
 		Orbs: orbs, OrbSlots: gs.Player.OrbSlots, OrbEmptySlots: gs.Player.OrbEmptySlots,
 		Enemies: enemies,
 	})
@@ -190,15 +199,14 @@ func buildNonCombatCompact(gs state.GameState, raw json.RawMessage) string {
 		"potions":   potions,
 	}
 
-	// For states where deck composition drives the decision, include card names.
-	if gs.StateType == "card_reward" || gs.StateType == "rest_site" || gs.StateType == "rewards" || gs.StateType == "shop" {
-		all := make([]string, 0, len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
-		for _, c := range gs.Player.DrawPile {
-			all = append(all, c.Name)
-		}
-		for _, c := range gs.Player.DiscardPile {
-			all = append(all, c.Name)
-		}
+	all := make([]string, 0, len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
+	for _, c := range gs.Player.DrawPile {
+		all = append(all, c.Name)
+	}
+	for _, c := range gs.Player.DiscardPile {
+		all = append(all, c.Name)
+	}
+	if len(all) > 0 {
 		p["deck"] = all
 	}
 
