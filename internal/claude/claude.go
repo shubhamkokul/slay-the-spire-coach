@@ -13,7 +13,7 @@ import (
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
 )
 
-const defaultModel = "llama3.1:8b"
+const defaultModel = "deepseek-r1:14b"
 const ollamaAddr = "http://localhost:11434"
 
 type Client struct {
@@ -72,13 +72,35 @@ func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
 	fmt.Printf("\n[%s]\n", trigger.Reason)
 
 	scanner := bufio.NewScanner(resp.Body)
+	inThink := false
 	for scanner.Scan() {
 		var chunk chatChunk
 		if err := json.Unmarshal(scanner.Bytes(), &chunk); err != nil {
 			continue
 		}
-		if chunk.Message.Content != "" {
-			fmt.Print(chunk.Message.Content)
+		tok := chunk.Message.Content
+		if tok != "" {
+			// Strip deepseek-r1 <think>...</think> reasoning blocks
+			for {
+				if inThink {
+					if end := indexOf(tok, "</think>"); end >= 0 {
+						tok = tok[end+len("</think>"):]
+						inThink = false
+					} else {
+						tok = ""
+						break
+					}
+				} else {
+					if start := indexOf(tok, "<think>"); start >= 0 {
+						fmt.Print(tok[:start])
+						tok = tok[start+len("<think>"):]
+						inThink = true
+					} else {
+						fmt.Print(tok)
+						break
+					}
+				}
+			}
 		}
 		if chunk.Done {
 			break
@@ -87,4 +109,13 @@ func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
 	fmt.Println()
 
 	return scanner.Err()
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
