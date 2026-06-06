@@ -14,7 +14,8 @@ func System(stateType string) string {
 
 Rules:
 - Only use cards where can_play is true
-- Track energy: subtract each card's cost as you go, stop when energy runs out
+- Track energy: subtract each card's cost as you go, stop when energy hits 0
+- X-cost cards (Whirlwind, Blade Dance, etc.) spend ALL remaining energy — nothing can be played after them
 - Never suggest a card you cannot afford
 - Factor in active powers/status on player and enemies (Strength, Weak, Vulnerable, Frail, etc.)
 - Factor in available potions if using one changes the outcome (mention it explicitly)

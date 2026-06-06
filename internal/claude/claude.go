@@ -1,59 +1,90 @@
 package claude
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
+	"net/http"
+	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/prompt"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
 )
 
+const defaultModel = "llama3.1:8b"
+const ollamaAddr = "http://localhost:11434"
+
 type Client struct {
-	api anthropic.Client
+	http  *http.Client
+	model string
 }
 
-func New() (*Client, error) {
-	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
+func New(model string) *Client {
+	if model == "" {
+		model = defaultModel
 	}
 	return &Client{
-		api: anthropic.NewClient(),
-	}, nil
+		http:  &http.Client{Timeout: 60 * time.Second},
+		model: model,
+	}
+}
+
+type chatRequest struct {
+	Model    string    `json:"model"`
+	Messages []message `json:"messages"`
+	Stream   bool      `json:"stream"`
+}
+
+type message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatChunk struct {
+	Message message `json:"message"`
+	Done    bool    `json:"done"`
 }
 
 func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
-	userMsg := prompt.Build(trigger)
+	body, _ := json.Marshal(chatRequest{
+		Model: c.model,
+		Messages: []message{
+			{Role: "system", Content: prompt.System(trigger.State.StateType)},
+			{Role: "user", Content: prompt.Build(trigger)},
+		},
+		Stream: true,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, "POST", ollamaAddr+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
 	fmt.Printf("\n[%s]\n", trigger.Reason)
 
-	stream := c.api.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeSonnet4_6,
-		MaxTokens: 150,
-		System: []anthropic.TextBlockParam{{
-			Text: prompt.System(trigger.State.StateType),
-		}},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg)),
-		},
-	})
-
-	for stream.Next() {
-		event := stream.Current()
-		switch ev := event.AsAny().(type) {
-		case anthropic.ContentBlockDeltaEvent:
-			switch delta := ev.Delta.AsAny().(type) {
-			case anthropic.TextDelta:
-				fmt.Print(delta.Text)
-			}
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		var chunk chatChunk
+		if err := json.Unmarshal(scanner.Bytes(), &chunk); err != nil {
+			continue
+		}
+		if chunk.Message.Content != "" {
+			fmt.Print(chunk.Message.Content)
+		}
+		if chunk.Done {
+			break
 		}
 	}
 	fmt.Println()
 
-	if err := stream.Err(); err != nil {
-		return fmt.Errorf("stream error: %w", err)
-	}
-	return nil
+	return scanner.Err()
 }
-

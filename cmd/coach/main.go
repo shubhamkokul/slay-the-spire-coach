@@ -18,15 +18,13 @@ import (
 
 func main() {
 	addr := flag.String("addr", "", "STS2MCP address (default http://localhost:15526)")
+	model := flag.String("model", "", "Ollama model (default llama3.1:8b)")
 	interval := flag.Duration("interval", 2*time.Second, "poll interval")
-	cooldown := flag.Duration("cooldown", 6*time.Second, "min time between auto Claude calls")
+	cooldown := flag.Duration("cooldown", 6*time.Second, "min time between auto calls")
 	flag.Parse()
 
 	sts2 := client.New(*addr)
-	ai, err := claude.New()
-	if err != nil {
-		log.Fatal(err)
-	}
+	ai := claude.New(*model)
 
 	for {
 		if err := sts2.Ping(); err == nil {
