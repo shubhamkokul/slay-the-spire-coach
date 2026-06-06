@@ -128,6 +128,21 @@ If the mod runs on a different port:
 
 ---
 
+## Character-specific state
+
+Each STS2 character has unique mechanics that change what information the model needs to give useful advice. The coach handles this per character:
+
+| Character | Extra state sent |
+|---|---|
+| The Defect | Active orbs (name, passive value, evoke value), orb slots, empty slots |
+| Others | Deck composition for card/relic decisions; standard combat state otherwise |
+
+Orb management is central to The Defect — knowing what's slotted, what evokes for how much, and how many empty slots remain changes every combat decision. For characters without orbs the fields are omitted from the payload entirely.
+
+As STS2 adds characters with their own unique mechanics (stances, summons, etc.), add the relevant fields to `internal/state/types.go` and wire them into the appropriate compact builder in `internal/prompt/prompt.go`.
+
+---
+
 ## Project structure
 
 ```
