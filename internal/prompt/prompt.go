@@ -18,7 +18,7 @@ Rules:
 - Only play cards where can_play is true
 - Track energy: subtract each card cost, stop at 0
 - X-cost cards (Whirlwind, etc.) spend ALL remaining energy — nothing after them
-- Factor in player powers (Strength adds damage, Weak reduces it by 25%, Vulnerable takes 50% more)
+- Factor in player powers (Strength adds damage, Weak reduces by 25%, Vulnerable takes 50% more)
 - If a potion (can_use: true) changes the outcome, recommend it — potions cost 0 energy
 
 One line only:
@@ -44,15 +44,20 @@ Best option: Buy [item], Remove [card], or Save gold. Why.`
 		return `Slay the Spire 2 coach. One line: Take [option]. Why.`
 
 	case "map":
-		return `Slay the Spire 2 coach. One line: Go [path]. Why.`
+		return `Slay the Spire 2 coach. Path advice.
+
+If a Boss node is visible within 1-2 floors, add: BOSS WARNING: [what to prepare].
+Otherwise: Go [path]. Why. One or two lines max.`
 
 	default:
 		return `Slay the Spire 2 coach. One sentence. Specific.`
 	}
 }
 
-// compactCombat is a stripped-down combat state with only what Claude needs.
+// compactCombat — stripped combat state sent to Claude (~150 tokens vs ~1400)
 type compactCombat struct {
+	Act       int              `json:"act"`
+	Floor     int              `json:"floor"`
 	Energy    int              `json:"energy"`
 	MaxEnergy int              `json:"max_energy"`
 	HP        int              `json:"hp"`
@@ -83,11 +88,11 @@ type compactPotion struct {
 }
 
 type compactEnemy struct {
-	Name   string        `json:"name"`
-	HP     int           `json:"hp"`
-	MaxHP  int           `json:"max_hp"`
-	Block  int           `json:"block"`
-	Intent string        `json:"intent"`
+	Name   string         `json:"name"`
+	HP     int            `json:"hp"`
+	MaxHP  int            `json:"max_hp"`
+	Block  int            `json:"block"`
+	Intent string         `json:"intent"`
 	Powers []compactPower `json:"powers,omitempty"`
 }
 
@@ -96,67 +101,83 @@ func buildCombatCompact(gs state.GameState) string {
 	for i, c := range gs.Player.Hand {
 		hand[i] = compactCard{Name: c.Name, Cost: c.Cost, CanPlay: c.CanPlay, Upgraded: c.IsUpgraded}
 	}
-
 	powers := make([]compactPower, len(gs.Player.Status))
 	for i, p := range gs.Player.Status {
 		powers[i] = compactPower{Name: p.Name, Amount: p.Amount}
 	}
-
 	relics := make([]string, len(gs.Player.Relics))
 	for i, r := range gs.Player.Relics {
 		relics[i] = r.Name
 	}
-
 	var potions []compactPotion
 	for _, p := range gs.Player.Potions {
 		if p.CanUseInCombat {
 			potions = append(potions, compactPotion{Name: p.Name, CanUse: true})
 		}
 	}
-
 	var enemies []compactEnemy
 	if gs.Battle != nil {
 		for _, e := range gs.Battle.Enemies {
-			intent := ""
+			var parts []string
 			for _, i := range e.Intents {
-				if intent != "" {
-					intent += ", "
-				}
-				intent += i.Title
+				s := i.Title
 				if i.Label != "" {
-					intent += " " + i.Label
+					s += " " + i.Label
 				}
+				parts = append(parts, s)
 			}
-			epowers := make([]compactPower, len(e.Status))
+			epow := make([]compactPower, len(e.Status))
 			for i, p := range e.Status {
-				epowers[i] = compactPower{Name: p.Name, Amount: p.Amount}
+				epow[i] = compactPower{Name: p.Name, Amount: p.Amount}
 			}
 			enemies = append(enemies, compactEnemy{
 				Name:   e.Name,
 				HP:     e.HP,
 				MaxHP:  e.MaxHP,
 				Block:  e.Block,
-				Intent: intent,
-				Powers: epowers,
+				Intent: strings.Join(parts, ", "),
+				Powers: epow,
 			})
 		}
 	}
+	b, _ := json.Marshal(compactCombat{
+		Act: gs.Run.Act, Floor: gs.Run.Floor,
+		Energy: gs.Player.Energy, MaxEnergy: gs.Player.MaxEnergy,
+		HP: gs.Player.HP, MaxHP: gs.Player.MaxHP, Block: gs.Player.Block,
+		Hand: hand, Powers: powers, Relics: relics, Potions: potions, Enemies: enemies,
+	})
+	return string(b)
+}
 
-	compact := compactCombat{
-		Energy:    gs.Player.Energy,
-		MaxEnergy: gs.Player.MaxEnergy,
-		HP:        gs.Player.HP,
-		MaxHP:     gs.Player.MaxHP,
-		Block:     gs.Player.Block,
-		Hand:      hand,
-		Powers:    powers,
-		Relics:    relics,
-		Potions:   potions,
-		Enemies:   enemies,
+// buildNonCombatCompact strips verbose player fields (relic/card descriptions)
+// while keeping all state-specific data (card choices, shop inventory, event options).
+func buildNonCombatCompact(gs state.GameState, raw json.RawMessage) string {
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return string(raw)
 	}
 
-	b, _ := json.Marshal(compact)
-	return string(b)
+	relics := make([]string, len(gs.Player.Relics))
+	for i, r := range gs.Player.Relics {
+		relics[i] = r.Name
+	}
+	var potions []string
+	for _, p := range gs.Player.Potions {
+		potions = append(potions, p.Name)
+	}
+
+	compactP, _ := json.Marshal(map[string]interface{}{
+		"character": gs.Player.Character,
+		"hp":        gs.Player.HP,
+		"max_hp":    gs.Player.MaxHP,
+		"gold":      gs.Player.Gold,
+		"relics":    relics,
+		"potions":   potions,
+	})
+	data["player"] = compactP
+
+	out, _ := json.Marshal(data)
+	return string(out)
 }
 
 func Build(trigger *state.Trigger) string {
@@ -166,8 +187,7 @@ func Build(trigger *state.Trigger) string {
 	if state.IsCombat(trigger.State.StateType) {
 		gameData = buildCombatCompact(trigger.State)
 	} else {
-		raw, _ := json.Marshal(json.RawMessage(trigger.Raw))
-		gameData = string(raw)
+		gameData = buildNonCombatCompact(trigger.State, trigger.Raw)
 	}
 
 	if len(trigger.Context) > 0 {

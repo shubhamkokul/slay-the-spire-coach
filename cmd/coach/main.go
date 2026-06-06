@@ -31,6 +31,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	defer func() {
+		fmt.Println("\n" + ai.SessionSummary())
+		ai.Close()
+	}()
+
 	for {
 		if err := sts2.Ping(); err == nil {
 			break
