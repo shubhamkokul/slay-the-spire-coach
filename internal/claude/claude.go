@@ -20,10 +20,12 @@ const (
 )
 
 type Client struct {
-	api         anthropic.Client
-	sessionIn   int64
-	sessionOut  int64
-	log         *os.File
+	api       anthropic.Client
+	sessionIn int64
+	sessionOut int64
+	log       *os.File
+	history   []anthropic.MessageParam
+	sysPrompt string
 }
 
 func New() (*Client, error) {
@@ -44,118 +46,105 @@ func New() (*Client, error) {
 	}, nil
 }
 
+// Advise gives state-specific advice and starts a fresh conversation thread.
+// Follow-up questions via Ask will have this advice in context.
 func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
 	userMsg := prompt.Build(trigger)
+	sys := prompt.System(trigger.State.StateType)
+
+	c.sysPrompt = sys
+	c.history = []anthropic.MessageParam{
+		anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg)),
+	}
 
 	fmt.Printf("\n[%s]\n", trigger.Reason)
 
-	stream := c.api.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaudeHaiku4_5,
-		MaxTokens: 200,
-		System: []anthropic.TextBlockParam{{
-			Text: prompt.System(trigger.State.StateType),
-		}},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg)),
-		},
-	})
-
-	var response strings.Builder
-	var accumulated anthropic.Message
-
-	for stream.Next() {
-		event := stream.Current()
-		accumulated.Accumulate(event)
-		switch ev := event.AsAny().(type) {
-		case anthropic.ContentBlockDeltaEvent:
-			switch delta := ev.Delta.AsAny().(type) {
-			case anthropic.TextDelta:
-				fmt.Print(delta.Text)
-				response.WriteString(delta.Text)
-			}
-		}
-	}
-	fmt.Println()
-
-	if err := stream.Err(); err != nil {
-		return fmt.Errorf("stream error: %w", err)
+	reply, in, out, err := c.stream(ctx, sys, c.history, 200)
+	if err != nil {
+		return err
 	}
 
-	// Track tokens
-	in := accumulated.Usage.InputTokens
-	out := accumulated.Usage.OutputTokens
-	c.sessionIn += in
-	c.sessionOut += out
-	cost := c.sessionCostFloat()
-	fmt.Printf("[tokens: +%din +%dout | session: $%.4f]\n", in, out, cost)
+	c.history = append(c.history, anthropic.NewAssistantMessage(anthropic.NewTextBlock(reply)))
+	c.track(in, out)
 
-	// Log to file
 	if c.log != nil {
 		fmt.Fprintf(c.log, "\n[%s] %s | %s\n%s\n[tokens: %din %dout]\n",
-			time.Now().Format("15:04:05"),
-			trigger.Reason,
-			trigger.State.StateType,
-			response.String(),
-			in, out,
-		)
+			time.Now().Format("15:04:05"), trigger.Reason, trigger.State.StateType, reply, in, out)
 	}
-
 	return nil
 }
 
+// Ask answers a follow-up question using the current conversation thread.
+// If no advice has been given yet, it includes the full game state in the question.
 func (c *Client) Ask(ctx context.Context, question string, gs state.GameState, raw json.RawMessage) error {
-	userMsg := prompt.BuildQuestion(question, gs, raw)
+	var userMsg string
+	if len(c.history) == 0 {
+		// No prior advice — include full game state so Claude has context
+		userMsg = prompt.BuildQuestion(question, gs, raw)
+	} else {
+		userMsg = question
+	}
+
+	c.history = append(c.history, anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg)))
+
+	sys := c.sysPrompt
+	if sys == "" {
+		sys = prompt.SystemQuestion()
+	}
 
 	fmt.Printf("\n[question]\n")
 
-	stream := c.api.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
+	reply, in, out, err := c.stream(ctx, sys, c.history, 400)
+	if err != nil {
+		return err
+	}
+
+	c.history = append(c.history, anthropic.NewAssistantMessage(anthropic.NewTextBlock(reply)))
+	c.track(in, out)
+
+	if c.log != nil {
+		fmt.Fprintf(c.log, "\n[%s] question\n%s\n→ %s\n[tokens: %din %dout]\n",
+			time.Now().Format("15:04:05"), question, reply, in, out)
+	}
+	return nil
+}
+
+func (c *Client) stream(ctx context.Context, sys string, messages []anthropic.MessageParam, maxTokens int64) (string, int64, int64, error) {
+	s := c.api.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeHaiku4_5,
-		MaxTokens: 400,
-		System: []anthropic.TextBlockParam{{
-			Text: prompt.SystemQuestion(),
-		}},
-		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg)),
-		},
+		MaxTokens: maxTokens,
+		System:    []anthropic.TextBlockParam{{Text: sys}},
+		Messages:  messages,
 	})
 
-	var response strings.Builder
+	var sb strings.Builder
 	var accumulated anthropic.Message
 
-	for stream.Next() {
-		event := stream.Current()
+	for s.Next() {
+		event := s.Current()
 		accumulated.Accumulate(event)
 		switch ev := event.AsAny().(type) {
 		case anthropic.ContentBlockDeltaEvent:
 			switch delta := ev.Delta.AsAny().(type) {
 			case anthropic.TextDelta:
 				fmt.Print(delta.Text)
-				response.WriteString(delta.Text)
+				sb.WriteString(delta.Text)
 			}
 		}
 	}
 	fmt.Println()
 
-	if err := stream.Err(); err != nil {
-		return fmt.Errorf("stream error: %w", err)
+	if err := s.Err(); err != nil {
+		return "", 0, 0, fmt.Errorf("stream error: %w", err)
 	}
 
-	in := accumulated.Usage.InputTokens
-	out := accumulated.Usage.OutputTokens
+	return sb.String(), accumulated.Usage.InputTokens, accumulated.Usage.OutputTokens, nil
+}
+
+func (c *Client) track(in, out int64) {
 	c.sessionIn += in
 	c.sessionOut += out
 	fmt.Printf("[tokens: +%din +%dout | session: $%.4f]\n", in, out, c.sessionCostFloat())
-
-	if c.log != nil {
-		fmt.Fprintf(c.log, "\n[%s] question\n%s\n→ %s\n[tokens: %din %dout]\n",
-			time.Now().Format("15:04:05"),
-			question,
-			response.String(),
-			in, out,
-		)
-	}
-
-	return nil
 }
 
 func (c *Client) sessionCostFloat() float64 {
