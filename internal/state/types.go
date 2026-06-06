@@ -93,9 +93,10 @@ type Potion struct {
 }
 
 type Trigger struct {
-	Reason string
-	State  GameState
-	Raw    json.RawMessage
+	Reason  string
+	State   GameState
+	Raw     json.RawMessage
+	Context []string // player-provided context
 }
 
 // States worth advising on

@@ -3,6 +3,7 @@ package prompt
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
 )
@@ -64,5 +65,9 @@ Go [node types in order]. One sentence reason.`
 
 func Build(trigger *state.Trigger) string {
 	raw, _ := json.MarshalIndent(json.RawMessage(trigger.Raw), "", "  ")
-	return fmt.Sprintf("Trigger: %s\n\nGame state:\n%s", trigger.Reason, string(raw))
+	if len(trigger.Context) == 0 {
+		return fmt.Sprintf("Trigger: %s\n\nGame state:\n%s", trigger.Reason, string(raw))
+	}
+	ctx := strings.Join(trigger.Context, "\n- ")
+	return fmt.Sprintf("Trigger: %s\n\nPlayer context:\n- %s\n\nGame state:\n%s", trigger.Reason, ctx, string(raw))
 }

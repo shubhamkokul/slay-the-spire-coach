@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/client"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
 )
+
+const maxContext = 5
 
 func main() {
 	addr := flag.String("addr", "", "STS2MCP address (default http://localhost:15526)")
@@ -35,18 +38,31 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 
-	fmt.Println("Ready. Press Enter anytime for advice.")
+	fmt.Println("Ready.")
+	fmt.Println("  Enter          → advice now")
+	fmt.Println("  type + Enter   → add context")
+	fmt.Println("  clear + Enter  → clear context")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	manual := make(chan struct{}, 1)
+	contextMsg := make(chan string, 4)
+
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
-			select {
-			case manual <- struct{}{}:
-			default:
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				select {
+				case manual <- struct{}{}:
+				default:
+				}
+			} else {
+				select {
+				case contextMsg <- line:
+				default:
+				}
 			}
 		}
 	}()
@@ -55,16 +71,21 @@ func main() {
 	var lastAdvisedHash string
 	var lastCall time.Time
 	var lastWaiting time.Time
+	var userContext []string
 	first := true
 
 	ticker := time.NewTicker(*interval)
 	defer ticker.Stop()
 
+	withContext := func(t *state.Trigger) *state.Trigger {
+		t.Context = append([]string(nil), userContext...)
+		return t
+	}
+
 	advise := func(trigger *state.Trigger, force bool) {
 		currHash := state.Hash(trigger.State)
 
 		if !force {
-			// Same state as last advice — player is thinking
 			if currHash == lastAdvisedHash {
 				if state.IsCombat(trigger.State.StateType) && time.Since(lastWaiting) > 20*time.Second {
 					fmt.Println("thinking...")
@@ -72,7 +93,6 @@ func main() {
 				}
 				return
 			}
-			// cards dealt bypasses cooldown — it always fires after a silence
 			if trigger.Reason != "cards dealt" && time.Since(lastCall) < *cooldown {
 				return
 			}
@@ -94,13 +114,25 @@ func main() {
 		case <-ctx.Done():
 			return
 
+		case line := <-contextMsg:
+			if strings.ToLower(line) == "clear" {
+				userContext = nil
+				fmt.Println("context cleared")
+			} else {
+				if len(userContext) >= maxContext {
+					userContext = userContext[1:]
+				}
+				userContext = append(userContext, line)
+				fmt.Printf("context saved (%d/%d)\n", len(userContext), maxContext)
+			}
+
 		case <-manual:
 			curr, raw, err := sts2.GetState()
 			if err != nil {
 				log.Printf("poll error: %v", err)
 				continue
 			}
-			trigger := &state.Trigger{Reason: "manual", State: curr, Raw: raw}
+			trigger := withContext(&state.Trigger{Reason: "manual", State: curr, Raw: raw})
 			advise(trigger, true)
 
 		case <-ticker.C:
@@ -123,7 +155,7 @@ func main() {
 				continue
 			}
 
-			advise(trigger, false)
+			advise(withContext(trigger), false)
 		}
 	}
 }
