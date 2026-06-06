@@ -65,12 +65,23 @@ func (c *STS2Client) GetState() (state.GameState, json.RawMessage, error) {
 		return state.GameState{}, nil, fmt.Errorf("parse error: %w", err)
 	}
 
-	// Update last known deck whenever the API gives us one.
-	allCards := append(gs.Player.DrawPile, gs.Player.DiscardPile...)
-	if len(allCards) > 0 {
-		c.lastDeck = allCards
-	} else if len(c.lastDeck) > 0 {
-		// API returned empty piles (e.g. post-combat card reward) — restore from cache.
+	// During combat, capture the full deck: hand + draw + discard.
+	// Outside combat the mod omits deck data entirely, so we restore from cache.
+	if state.IsCombat(gs.StateType) {
+		full := make([]state.DeckCard, 0, len(gs.Player.Hand)+len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
+		for _, card := range gs.Player.Hand {
+			name := card.Name
+			if card.IsUpgraded {
+				name += "+"
+			}
+			full = append(full, state.DeckCard{Name: name, Cost: card.Cost})
+		}
+		full = append(full, gs.Player.DrawPile...)
+		full = append(full, gs.Player.DiscardPile...)
+		if len(full) > 0 {
+			c.lastDeck = full
+		}
+	} else if len(gs.Player.DrawPile) == 0 && len(c.lastDeck) > 0 {
 		gs.Player.DrawPile = c.lastDeck
 	}
 
