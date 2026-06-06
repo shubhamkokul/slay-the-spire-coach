@@ -22,7 +22,7 @@ const maxContext = 5
 func main() {
 	addr := flag.String("addr", "", "STS2MCP address (default http://localhost:15526)")
 	interval := flag.Duration("interval", 2*time.Second, "poll interval")
-	cooldown := flag.Duration("cooldown", 8*time.Second, "min time between auto calls")
+	cooldown := flag.Duration("cooldown", 20*time.Second, "min time between auto calls")
 	flag.Parse()
 
 	sts2 := client.New(*addr)

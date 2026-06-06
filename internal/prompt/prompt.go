@@ -14,73 +14,165 @@ func System(stateType string) string {
 		return `Slay the Spire 2 coach. Combat only.
 
 Rules:
-- player.energy is your current energy this turn — you cannot spend more than this
-- Only use cards where can_play is true
-- Track energy: start at player.energy, subtract each card's cost. Stop when energy hits 0
-- X-cost cards (Whirlwind, Blade Dance, etc.) spend ALL remaining energy — nothing playable after them
-- Never suggest a card that costs more than your remaining energy
-- Factor in player.status powers (Strength, Weak, Vulnerable, Frail) in damage calculations
-- Check potions[].can_use_in_combat — if a potion is usable and changes the outcome, recommend it
-- Potions cost 0 energy and can be used before or after playing cards
+- energy is your current energy — cannot spend more than this
+- Only play cards where can_play is true
+- Track energy: subtract each card cost, stop at 0
+- X-cost cards (Whirlwind, etc.) spend ALL remaining energy — nothing after them
+- Factor in player powers (Strength adds damage, Weak reduces it by 25%, Vulnerable takes 50% more)
+- If a potion (can_use: true) changes the outcome, recommend it — potions cost 0 energy
 
-One line response only:
-Play: [Card(cost)] → [Card(cost)] → ... energy used: X/Y = [damage] dmg, [enemy dies / X HP left]. Watch: [intent + number].
-If a potion should be used, prepend: Potion: [name] →`
+One line only:
+Play: [Card] → [Card] → ... = [damage] dmg, [dies / X HP left]. Watch: [intent + number].
+Prepend Potion: [name] if needed.`
 
 	case "card_reward":
-		return `Slay the Spire 2 coach. Card pick advice only.
-
-Consider the player's current relics, potions, and existing deck when evaluating synergy.
-
-Take [Card] — [one reason referencing deck/relic synergy].
+		return `Slay the Spire 2 coach. Card pick only.
+Take [Card] — [one reason].
 Skip the rest.`
 
 	case "rewards":
-		return `Slay the Spire 2 coach. Reward advice only.
-
-Take [item]. Skip [item]. One sentence max.`
+		return `Slay the Spire 2 coach. One line: Take [item] or Skip all.`
 
 	case "rest_site":
-		return `Slay the Spire 2 coach. Rest site advice only.
-
-Rest / Smith [Card]. One sentence reason.`
+		return `Slay the Spire 2 coach. One line: Rest or Smith [Card]. Why.`
 
 	case "shop":
-		return `Slay the Spire 2 coach. Shop advice only.
-
-Consider: cards, relics, potions, and card removal (removing a weak card is often the best purchase).
-Buy [item] / Remove [card]. Skip [item]. Save gold if nothing fits. One sentence reason.`
+		return `Slay the Spire 2 coach. Shop. One line.
+Best option: Buy [item], Remove [card], or Save gold. Why.`
 
 	case "event":
-		return `Slay the Spire 2 coach. Event advice only.
-
-Take [option]. One sentence reason.`
+		return `Slay the Spire 2 coach. One line: Take [option]. Why.`
 
 	case "map":
-		return `Slay the Spire 2 coach. Path advice only.
-
-Go [node types in order]. One sentence reason.`
+		return `Slay the Spire 2 coach. One line: Go [path]. Why.`
 
 	default:
-		return `Slay the Spire 2 coach. One to two sentences. Specific and direct.`
+		return `Slay the Spire 2 coach. One sentence. Specific.`
 	}
 }
 
-func Build(trigger *state.Trigger) string {
-	raw, _ := json.MarshalIndent(json.RawMessage(trigger.Raw), "", "  ")
+// compactCombat is a stripped-down combat state with only what Claude needs.
+type compactCombat struct {
+	Energy    int              `json:"energy"`
+	MaxEnergy int              `json:"max_energy"`
+	HP        int              `json:"hp"`
+	MaxHP     int              `json:"max_hp"`
+	Block     int              `json:"block"`
+	Hand      []compactCard    `json:"hand"`
+	Powers    []compactPower   `json:"powers,omitempty"`
+	Relics    []string         `json:"relics"`
+	Potions   []compactPotion  `json:"potions,omitempty"`
+	Enemies   []compactEnemy   `json:"enemies"`
+}
 
+type compactCard struct {
+	Name     string `json:"name"`
+	Cost     string `json:"cost"`
+	CanPlay  bool   `json:"can_play"`
+	Upgraded bool   `json:"upgraded,omitempty"`
+}
+
+type compactPower struct {
+	Name   string `json:"name"`
+	Amount int    `json:"amount"`
+}
+
+type compactPotion struct {
+	Name   string `json:"name"`
+	CanUse bool   `json:"can_use"`
+}
+
+type compactEnemy struct {
+	Name   string        `json:"name"`
+	HP     int           `json:"hp"`
+	MaxHP  int           `json:"max_hp"`
+	Block  int           `json:"block"`
+	Intent string        `json:"intent"`
+	Powers []compactPower `json:"powers,omitempty"`
+}
+
+func buildCombatCompact(gs state.GameState) string {
+	hand := make([]compactCard, len(gs.Player.Hand))
+	for i, c := range gs.Player.Hand {
+		hand[i] = compactCard{Name: c.Name, Cost: c.Cost, CanPlay: c.CanPlay, Upgraded: c.IsUpgraded}
+	}
+
+	powers := make([]compactPower, len(gs.Player.Status))
+	for i, p := range gs.Player.Status {
+		powers[i] = compactPower{Name: p.Name, Amount: p.Amount}
+	}
+
+	relics := make([]string, len(gs.Player.Relics))
+	for i, r := range gs.Player.Relics {
+		relics[i] = r.Name
+	}
+
+	var potions []compactPotion
+	for _, p := range gs.Player.Potions {
+		if p.CanUseInCombat {
+			potions = append(potions, compactPotion{Name: p.Name, CanUse: true})
+		}
+	}
+
+	var enemies []compactEnemy
+	if gs.Battle != nil {
+		for _, e := range gs.Battle.Enemies {
+			intent := ""
+			for _, i := range e.Intents {
+				if intent != "" {
+					intent += ", "
+				}
+				intent += i.Title
+				if i.Label != "" {
+					intent += " " + i.Label
+				}
+			}
+			epowers := make([]compactPower, len(e.Status))
+			for i, p := range e.Status {
+				epowers[i] = compactPower{Name: p.Name, Amount: p.Amount}
+			}
+			enemies = append(enemies, compactEnemy{
+				Name:   e.Name,
+				HP:     e.HP,
+				MaxHP:  e.MaxHP,
+				Block:  e.Block,
+				Intent: intent,
+				Powers: epowers,
+			})
+		}
+	}
+
+	compact := compactCombat{
+		Energy:    gs.Player.Energy,
+		MaxEnergy: gs.Player.MaxEnergy,
+		HP:        gs.Player.HP,
+		MaxHP:     gs.Player.MaxHP,
+		Block:     gs.Player.Block,
+		Hand:      hand,
+		Powers:    powers,
+		Relics:    relics,
+		Potions:   potions,
+		Enemies:   enemies,
+	}
+
+	b, _ := json.Marshal(compact)
+	return string(b)
+}
+
+func Build(trigger *state.Trigger) string {
 	header := fmt.Sprintf("Trigger: %s", trigger.Reason)
 
+	var gameData string
 	if state.IsCombat(trigger.State.StateType) {
-		header += fmt.Sprintf("\nEnergy: %d/%d",
-			trigger.State.Player.Energy,
-			trigger.State.Player.MaxEnergy,
-		)
+		gameData = buildCombatCompact(trigger.State)
+	} else {
+		raw, _ := json.Marshal(json.RawMessage(trigger.Raw))
+		gameData = string(raw)
 	}
 
 	if len(trigger.Context) > 0 {
 		ctx := strings.Join(trigger.Context, "\n- ")
-		return fmt.Sprintf("%s\n\nPlayer context:\n- %s\n\nGame state:\n%s", header, ctx, string(raw))
+		return fmt.Sprintf("%s\n\nPlayer context:\n- %s\n\nState:\n%s", header, ctx, gameData)
 	}
-	return fmt.Sprintf("%s\n\nGame state:\n%s", header, string(raw))
+	return fmt.Sprintf("%s\n\nState:\n%s", header, gameData)
 }
