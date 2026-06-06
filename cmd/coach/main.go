@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -48,6 +50,7 @@ func main() {
 	fmt.Println("  Enter                  → advice")
 	fmt.Println("  Stored: <text> + Enter → save context")
 	fmt.Println("  clear + Enter          → clear context")
+	fmt.Println("  dump + Enter           → write raw state to /tmp/sts2-state.json")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -72,6 +75,24 @@ func main() {
 		line := strings.TrimSpace(scanner.Text())
 
 		switch {
+		case line == "dump":
+			_, raw, err := sts2.GetState()
+			if err != nil {
+				log.Printf("error: %v", err)
+				continue
+			}
+			var pretty bytes.Buffer
+			if err := json.Indent(&pretty, raw, "", "  "); err != nil {
+				log.Printf("indent error: %v", err)
+				continue
+			}
+			const dumpPath = "/tmp/sts2-state.json"
+			if err := os.WriteFile(dumpPath, pretty.Bytes(), 0644); err != nil {
+				log.Printf("write error: %v", err)
+				continue
+			}
+			fmt.Printf("dumped → %s\n", dumpPath)
+
 		case line == "clear":
 			userContext = nil
 			fmt.Println("context cleared")
