@@ -191,7 +191,7 @@ func buildNonCombatCompact(gs state.GameState, raw json.RawMessage) string {
 	}
 
 	// For states where deck composition drives the decision, include card names.
-	if gs.StateType == "card_reward" || gs.StateType == "rest_site" || gs.StateType == "rewards" {
+	if gs.StateType == "card_reward" || gs.StateType == "rest_site" || gs.StateType == "rewards" || gs.StateType == "shop" {
 		all := make([]string, 0, len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
 		for _, c := range gs.Player.DrawPile {
 			all = append(all, c.Name)
@@ -207,6 +207,38 @@ func buildNonCombatCompact(gs state.GameState, raw json.RawMessage) string {
 
 	out, _ := json.Marshal(data)
 	return string(out)
+}
+
+func SystemQuestion() string {
+	return `Slay the Spire 2 coach. Answer the player's question using their current game state. Be specific and direct. Two sentences max unless the question needs more.`
+}
+
+func BuildQuestion(question string, gs state.GameState, raw json.RawMessage) string {
+	relics := make([]string, len(gs.Player.Relics))
+	for i, r := range gs.Player.Relics {
+		relics[i] = r.Name
+	}
+
+	deck := make([]string, 0, len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
+	for _, c := range gs.Player.DrawPile {
+		deck = append(deck, c.Name)
+	}
+	for _, c := range gs.Player.DiscardPile {
+		deck = append(deck, c.Name)
+	}
+
+	ctx := fmt.Sprintf(
+		"Character: %s | Act %d Floor %d | HP %d/%d | Gold %d\nRelics: %s\nDeck: %s\nCurrent screen: %s",
+		gs.Player.Character,
+		gs.Run.Act, gs.Run.Floor,
+		gs.Player.HP, gs.Player.MaxHP,
+		gs.Player.Gold,
+		strings.Join(relics, ", "),
+		strings.Join(deck, ", "),
+		gs.StateType,
+	)
+
+	return fmt.Sprintf("Question: %s\n\nGame state:\n%s", question, ctx)
 }
 
 func Build(trigger *state.Trigger) string {

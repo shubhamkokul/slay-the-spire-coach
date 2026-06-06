@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,7 +42,9 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 
-	fmt.Println("Ready. Press Enter for advice.")
+	fmt.Println("Ready.")
+	fmt.Println("  Enter          → advice for current state")
+	fmt.Println("  Type + Enter   → ask a question")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -61,21 +64,31 @@ func main() {
 			return
 		}
 
+		line := strings.TrimSpace(scanner.Text())
+
 		curr, raw, err := sts2.GetState()
 		if err != nil {
 			log.Printf("error: %v", err)
 			continue
 		}
-		trigger := &state.Trigger{
-			Reason: curr.StateType,
-			State:  curr,
-			Raw:    raw,
+
+		var callErr error
+		if line == "" {
+			trigger := &state.Trigger{
+				Reason: curr.StateType,
+				State:  curr,
+				Raw:    raw,
+			}
+			callErr = ai.Advise(ctx, trigger)
+		} else {
+			callErr = ai.Ask(ctx, line, curr, raw)
 		}
-		if err := ai.Advise(ctx, trigger); err != nil {
+
+		if callErr != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("claude error: %v", err)
+			log.Printf("claude error: %v", callErr)
 		}
 	}
 }

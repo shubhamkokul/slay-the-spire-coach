@@ -2,6 +2,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,6 +95,61 @@ func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
 			time.Now().Format("15:04:05"),
 			trigger.Reason,
 			trigger.State.StateType,
+			response.String(),
+			in, out,
+		)
+	}
+
+	return nil
+}
+
+func (c *Client) Ask(ctx context.Context, question string, gs state.GameState, raw json.RawMessage) error {
+	userMsg := prompt.BuildQuestion(question, gs, raw)
+
+	fmt.Printf("\n[question]\n")
+
+	stream := c.api.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
+		Model:     anthropic.ModelClaudeHaiku4_5,
+		MaxTokens: 400,
+		System: []anthropic.TextBlockParam{{
+			Text: prompt.SystemQuestion(),
+		}},
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg)),
+		},
+	})
+
+	var response strings.Builder
+	var accumulated anthropic.Message
+
+	for stream.Next() {
+		event := stream.Current()
+		accumulated.Accumulate(event)
+		switch ev := event.AsAny().(type) {
+		case anthropic.ContentBlockDeltaEvent:
+			switch delta := ev.Delta.AsAny().(type) {
+			case anthropic.TextDelta:
+				fmt.Print(delta.Text)
+				response.WriteString(delta.Text)
+			}
+		}
+	}
+	fmt.Println()
+
+	if err := stream.Err(); err != nil {
+		return fmt.Errorf("stream error: %w", err)
+	}
+
+	in := accumulated.Usage.InputTokens
+	out := accumulated.Usage.OutputTokens
+	c.sessionIn += in
+	c.sessionOut += out
+	fmt.Printf("[tokens: +%din +%dout | session: $%.4f]\n", in, out, c.sessionCostFloat())
+
+	if c.log != nil {
+		fmt.Fprintf(c.log, "\n[%s] question\n%s\n→ %s\n[tokens: %din %dout]\n",
+			time.Now().Format("15:04:05"),
+			question,
 			response.String(),
 			in, out,
 		)
