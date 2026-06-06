@@ -86,10 +86,11 @@ type Relic struct {
 }
 
 type Potion struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	CanUse      bool   `json:"can_use"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description,omitempty"`
+	CanUseInCombat   bool   `json:"can_use_in_combat"`
+	TargetType       string `json:"target_type,omitempty"`
 }
 
 type Trigger struct {

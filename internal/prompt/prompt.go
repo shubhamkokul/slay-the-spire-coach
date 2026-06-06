@@ -20,11 +20,12 @@ Rules:
 - X-cost cards (Whirlwind, Blade Dance, etc.) spend ALL remaining energy — nothing playable after them
 - Never suggest a card that costs more than your remaining energy
 - Factor in player.status powers (Strength, Weak, Vulnerable, Frail) in damage calculations
-- Factor in available potions if using one changes the outcome
+- Check potions[].can_use_in_combat — if a potion is usable and changes the outcome, recommend it
+- Potions cost 0 energy and can be used before or after playing cards
 
 One line response only:
 Play: [Card(cost)] → [Card(cost)] → ... energy used: X/Y = [damage] dmg, [enemy dies / X HP left]. Watch: [intent + number].
-If a potion changes the optimal line, prepend: Potion: [name].`
+If a potion should be used, prepend: Potion: [name] →`
 
 	case "card_reward":
 		return `Slay the Spire 2 coach. Card pick advice only.
