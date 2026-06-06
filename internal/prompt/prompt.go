@@ -210,18 +210,11 @@ func buildNonCombatCompact(gs state.GameState, raw json.RawMessage) string {
 }
 
 func Build(trigger *state.Trigger) string {
-	header := fmt.Sprintf("Trigger: %s", trigger.Reason)
-
 	var gameData string
 	if state.IsCombat(trigger.State.StateType) {
 		gameData = buildCombatCompact(trigger.State)
 	} else {
 		gameData = buildNonCombatCompact(trigger.State, trigger.Raw)
 	}
-
-	if len(trigger.Context) > 0 {
-		ctx := strings.Join(trigger.Context, "\n- ")
-		return fmt.Sprintf("%s\n\nPlayer context:\n- %s\n\nState:\n%s", header, ctx, gameData)
-	}
-	return fmt.Sprintf("%s\n\nState:\n%s", header, gameData)
+	return fmt.Sprintf("Trigger: %s\n\nState:\n%s", trigger.Reason, gameData)
 }
