@@ -39,9 +39,9 @@ func main() {
 	}
 
 	fmt.Println("Ready.")
-	fmt.Println("  Enter          → advice now")
-	fmt.Println("  type + Enter   → add context")
-	fmt.Println("  clear + Enter  → clear context")
+	fmt.Println("  Enter                  → advice now")
+	fmt.Println("  Stored: <text> + Enter → save context for Claude")
+	fmt.Println("  clear + Enter          → clear saved context")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -118,12 +118,15 @@ func main() {
 			if strings.ToLower(line) == "clear" {
 				userContext = nil
 				fmt.Println("context cleared")
-			} else {
-				if len(userContext) >= maxContext {
-					userContext = userContext[1:]
+			} else if strings.HasPrefix(line, "Stored:") {
+				text := strings.TrimSpace(strings.TrimPrefix(line, "Stored:"))
+				if text != "" {
+					if len(userContext) >= maxContext {
+						userContext = userContext[1:]
+					}
+					userContext = append(userContext, text)
+					fmt.Printf("stored (%d/%d)\n", len(userContext), maxContext)
 				}
-				userContext = append(userContext, line)
-				fmt.Printf("context saved (%d/%d)\n", len(userContext), maxContext)
 			}
 
 		case <-manual:
