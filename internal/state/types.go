@@ -6,10 +6,10 @@ import (
 )
 
 type GameState struct {
-	StateType string       `json:"state_type"`
-	Run       RunState     `json:"run"`
-	Player    PlayerState  `json:"player"`
-	Battle    *BattleState `json:"battle,omitempty"`
+	StateType string          `json:"state_type"`
+	Run       RunState        `json:"run"`
+	Player    PlayerState     `json:"player"`
+	Battle    *BattleState    `json:"battle,omitempty"`
 	Raw       json.RawMessage `json:"-"`
 }
 
@@ -98,8 +98,23 @@ type Trigger struct {
 	Raw    json.RawMessage
 }
 
-// Hash returns a short string identifying the key combat state.
-// Used to skip Claude calls when nothing meaningful has changed.
+// States worth advising on
+var advisable = map[string]bool{
+	"monster":   true,
+	"elite":     true,
+	"boss":      true,
+	"card_reward": true,
+	"rewards":   true,
+	"rest_site": true,
+	"shop":      true,
+	"event":     true,
+	"map":       true,
+}
+
+func IsCombat(s string) bool {
+	return s == "monster" || s == "elite" || s == "boss"
+}
+
 func Hash(gs GameState) string {
 	round := 0
 	var enemyStates string
@@ -126,16 +141,30 @@ func Hash(gs GameState) string {
 }
 
 func Detect(prev, curr GameState, currRaw json.RawMessage) *Trigger {
+	// State type changed
 	if prev.StateType != curr.StateType {
+		// Skip states we have no advice for
+		if !advisable[curr.StateType] {
+			return nil
+		}
+		// For combat: don't fire here — hand is empty, wait for cards dealt below
+		if IsCombat(curr.StateType) {
+			return nil
+		}
 		return &Trigger{Reason: "entered " + curr.StateType, State: curr, Raw: currRaw}
+	}
+
+	// Skip everything below for non-advisable states
+	if !advisable[curr.StateType] {
+		return nil
 	}
 
 	if curr.Run.Floor != prev.Run.Floor {
 		return &Trigger{Reason: "new floor", State: curr, Raw: currRaw}
 	}
 
-	// Heavy damage
-	if prev.Player.MaxHP > 0 {
+	// Heavy damage — combat only, 20% max HP threshold
+	if IsCombat(curr.StateType) && prev.Player.MaxHP > 0 {
 		if drop := prev.Player.HP - curr.Player.HP; drop > prev.Player.MaxHP/5 {
 			return &Trigger{Reason: "took heavy damage", State: curr, Raw: currRaw}
 		}
@@ -145,28 +174,10 @@ func Detect(prev, curr GameState, currRaw json.RawMessage) *Trigger {
 		return nil
 	}
 
-	// Hand just arrived — cards went from empty to populated (covers both first round and new rounds)
+	// Cards just dealt — hand went from empty to populated (start of every player turn)
 	if len(prev.Player.Hand) == 0 && len(curr.Player.Hand) > 0 {
 		return &Trigger{Reason: "cards dealt", State: curr, Raw: currRaw}
 	}
 
-	// Enemy intent changed mid-round
-	if intentKey(curr) != intentKey(prev) {
-		return &Trigger{Reason: "enemy intent changed", State: curr, Raw: currRaw}
-	}
-
 	return nil
-}
-
-func intentKey(gs GameState) string {
-	if gs.Battle == nil {
-		return ""
-	}
-	key := ""
-	for _, e := range gs.Battle.Enemies {
-		for _, i := range e.Intents {
-			key += e.EntityID + ":" + i.Type + ":" + i.Label + "|"
-		}
-	}
-	return key
 }

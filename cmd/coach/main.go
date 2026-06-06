@@ -19,7 +19,7 @@ import (
 func main() {
 	addr := flag.String("addr", "", "STS2MCP address (default http://localhost:15526)")
 	interval := flag.Duration("interval", 2*time.Second, "poll interval")
-	cooldown := flag.Duration("cooldown", 6*time.Second, "min time between auto calls")
+	cooldown := flag.Duration("cooldown", 8*time.Second, "min time between auto calls")
 	flag.Parse()
 
 	sts2 := client.New(*addr)
@@ -40,7 +40,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Manual trigger: press Enter
 	manual := make(chan struct{}, 1)
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
@@ -64,16 +63,19 @@ func main() {
 	advise := func(trigger *state.Trigger, force bool) {
 		currHash := state.Hash(trigger.State)
 
-		if !force && currHash == lastAdvisedHash {
-			if time.Since(lastWaiting) > 15*time.Second {
-				fmt.Println("waiting for player action...")
-				lastWaiting = time.Now()
+		if !force {
+			// Same state as last advice — player is thinking
+			if currHash == lastAdvisedHash {
+				if state.IsCombat(trigger.State.StateType) && time.Since(lastWaiting) > 20*time.Second {
+					fmt.Println("thinking...")
+					lastWaiting = time.Now()
+				}
+				return
 			}
-			return
-		}
-
-		if !force && time.Since(lastCall) < *cooldown {
-			return
+			// cards dealt bypasses cooldown — it always fires after a silence
+			if trigger.Reason != "cards dealt" && time.Since(lastCall) < *cooldown {
+				return
+			}
 		}
 
 		lastCall = time.Now()
@@ -93,7 +95,6 @@ func main() {
 			return
 
 		case <-manual:
-			// On-demand: use current game state, bypass cooldown and hash check
 			curr, raw, err := sts2.GetState()
 			if err != nil {
 				log.Printf("poll error: %v", err)
