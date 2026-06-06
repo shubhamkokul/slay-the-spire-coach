@@ -11,19 +11,15 @@ import (
 func System(stateType string) string {
 	switch stateType {
 	case "monster", "elite", "boss":
-		return `Slay the Spire 2 coach. Combat only.
+		return `Slay the Spire 2 coach. Combat.
 
-Rules:
-- energy is your current energy — cannot spend more than this
-- Only play cards where can_play is true
-- Track energy: subtract each card cost, stop at 0
-- X-cost cards (Whirlwind, etc.) spend ALL remaining energy — nothing after them
-- Factor in player powers (Strength adds damage, Weak reduces by 25%, Vulnerable takes 50% more)
-- If a potion (can_use: true) changes the outcome, recommend it — potions cost 0 energy
+Step 1 — Potions: check potions[]. If any has can_use:true and helps, use it (0 energy).
+Step 2 — Cards: you have exactly [energy] to spend. Only play cards where can_play:true. Track costs strictly. X-cost cards spend ALL remaining energy, nothing after.
+Step 3 — Powers: apply Strength (+N damage/attack), Weak (-25% damage dealt), Vulnerable (+50% damage taken).
+Card names ending in + are upgraded — use their upgraded values.
 
-One line only:
-Play: [Card] → [Card] → ... = [damage] dmg, [dies / X HP left]. Watch: [intent + number].
-Prepend Potion: [name] if needed.`
+Output ONE line, no explanation:
+[Potion: name →] Card(cost) → Card(cost) → ... = Xdmg [enemy dies / enemy at X HP]`
 
 	case "card_reward":
 		return `Slay the Spire 2 coach. Card pick only.
@@ -71,10 +67,9 @@ type compactCombat struct {
 }
 
 type compactCard struct {
-	Name     string `json:"name"`
-	Cost     string `json:"cost"`
-	CanPlay  bool   `json:"can_play"`
-	Upgraded bool   `json:"upgraded,omitempty"`
+	Name    string `json:"name"`
+	Cost    string `json:"cost"`
+	CanPlay bool   `json:"can_play"`
 }
 
 type compactPower struct {
@@ -99,7 +94,11 @@ type compactEnemy struct {
 func buildCombatCompact(gs state.GameState) string {
 	hand := make([]compactCard, len(gs.Player.Hand))
 	for i, c := range gs.Player.Hand {
-		hand[i] = compactCard{Name: c.Name, Cost: c.Cost, CanPlay: c.CanPlay, Upgraded: c.IsUpgraded}
+		name := c.Name
+		if c.IsUpgraded {
+			name += "+"
+		}
+		hand[i] = compactCard{Name: name, Cost: c.Cost, CanPlay: c.CanPlay}
 	}
 	powers := make([]compactPower, len(gs.Player.Status))
 	for i, p := range gs.Player.Status {
