@@ -2,7 +2,10 @@ module github.com/shubhamkokul/slay-the-spire-coach
 
 go 1.26.3
 
-require github.com/anthropics/anthropic-sdk-go v1.48.0
+require (
+	github.com/anthropics/anthropic-sdk-go v1.48.0
+	github.com/joho/godotenv v1.5.1
+)
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

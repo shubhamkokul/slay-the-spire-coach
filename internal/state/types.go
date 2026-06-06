@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type GameState struct {
@@ -100,17 +101,16 @@ type Trigger struct {
 	Context []string // player-provided context
 }
 
-// States worth advising on
-var advisable = map[string]bool{
-	"monster":   true,
-	"elite":     true,
-	"boss":      true,
-	"card_reward": true,
-	"rewards":   true,
-	"rest_site": true,
-	"shop":      true,
-	"event":     true,
-	"map":       true,
+var advisable = map[string]struct{}{
+	"monster":     {},
+	"elite":       {},
+	"boss":        {},
+	"card_reward": {},
+	"rewards":     {},
+	"rest_site":   {},
+	"shop":        {},
+	"event":       {},
+	"map":         {},
 }
 
 func IsCombat(s string) bool {
@@ -119,16 +119,17 @@ func IsCombat(s string) bool {
 
 func Hash(gs GameState) string {
 	round := 0
-	var enemyStates string
+	var enemies strings.Builder
 	if gs.Battle != nil {
 		round = gs.Battle.Round
 		for _, e := range gs.Battle.Enemies {
-			enemyStates += fmt.Sprintf("%s:%d:%d|", e.EntityID, e.HP, e.Block)
+			fmt.Fprintf(&enemies, "%s:%d:%d|", e.EntityID, e.HP, e.Block)
 		}
 	}
-	var handIDs string
+	var hand strings.Builder
 	for _, c := range gs.Player.Hand {
-		handIDs += c.ID + ","
+		hand.WriteString(c.ID)
+		hand.WriteByte(',')
 	}
 	return fmt.Sprintf("%s|f%d|r%d|hp%d|blk%d|e%d|hand:%s|enemies:%s",
 		gs.StateType,
@@ -137,8 +138,8 @@ func Hash(gs GameState) string {
 		gs.Player.HP,
 		gs.Player.Block,
 		gs.Player.Energy,
-		handIDs,
-		enemyStates,
+		hand.String(),
+		enemies.String(),
 	)
 }
 
@@ -146,7 +147,7 @@ func Detect(prev, curr GameState, currRaw json.RawMessage) *Trigger {
 	// State type changed
 	if prev.StateType != curr.StateType {
 		// Skip states we have no advice for
-		if !advisable[curr.StateType] {
+		if _, ok := advisable[curr.StateType]; !ok {
 			return nil
 		}
 		// For combat: if cards already in hand on first poll, fire immediately.
@@ -161,7 +162,7 @@ func Detect(prev, curr GameState, currRaw json.RawMessage) *Trigger {
 	}
 
 	// Skip everything below for non-advisable states
-	if !advisable[curr.StateType] {
+	if _, ok := advisable[curr.StateType]; !ok {
 		return nil
 	}
 

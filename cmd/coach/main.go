@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/claude"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/client"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
@@ -20,6 +21,8 @@ import (
 const maxContext = 5
 
 func main() {
+	_ = godotenv.Load()
+
 	addr := flag.String("addr", "", "STS2MCP address (default http://localhost:15526)")
 	flag.Parse()
 
@@ -60,6 +63,9 @@ func main() {
 		}
 
 		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				log.Printf("input error: %v", err)
+			}
 			return
 		}
 

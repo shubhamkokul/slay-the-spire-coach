@@ -31,9 +31,11 @@ func New() (*Client, error) {
 	}
 
 	logDir := filepath.Join(os.Getenv("HOME"), ".local", "share", "sts2-coach")
-	os.MkdirAll(logDir, 0755)
-	logPath := filepath.Join(logDir, time.Now().Format("2006-01-02")+".log")
-	logFile, _ := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	var logFile *os.File
+	if err := os.MkdirAll(logDir, 0755); err == nil {
+		logPath := filepath.Join(logDir, time.Now().Format("2006-01-02")+".log")
+		logFile, _ = os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	}
 
 	return &Client{
 		api: anthropic.NewClient(),
