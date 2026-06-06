@@ -21,20 +21,36 @@ type RunState struct {
 }
 
 type PlayerState struct {
-	Character        string   `json:"character"`
-	HP               int      `json:"hp"`
-	MaxHP            int      `json:"max_hp"`
-	Block            int      `json:"block"`
-	Gold             int      `json:"gold"`
-	Energy           int      `json:"energy"`
-	MaxEnergy        int      `json:"max_energy"`
-	Hand             []Card   `json:"hand,omitempty"`
-	DrawPileCount    int      `json:"draw_pile_count"`
-	DiscardPileCount int      `json:"discard_pile_count"`
-	ExhaustPileCount int      `json:"exhaust_pile_count"`
-	Status           []Power  `json:"status,omitempty"`
-	Relics           []Relic  `json:"relics,omitempty"`
-	Potions          []Potion `json:"potions,omitempty"`
+	Character        string     `json:"character"`
+	HP               int        `json:"hp"`
+	MaxHP            int        `json:"max_hp"`
+	Block            int        `json:"block"`
+	Gold             int        `json:"gold"`
+	Energy           int        `json:"energy"`
+	MaxEnergy        int        `json:"max_energy"`
+	Hand             []Card     `json:"hand,omitempty"`
+	DrawPileCount    int        `json:"draw_pile_count"`
+	DiscardPileCount int        `json:"discard_pile_count"`
+	ExhaustPileCount int        `json:"exhaust_pile_count"`
+	DrawPile         []DeckCard `json:"draw_pile,omitempty"`
+	DiscardPile      []DeckCard `json:"discard_pile,omitempty"`
+	Orbs             []Orb      `json:"orbs,omitempty"`
+	OrbSlots         int        `json:"orb_slots"`
+	OrbEmptySlots    int        `json:"orb_empty_slots"`
+	Status           []Power    `json:"status,omitempty"`
+	Relics           []Relic    `json:"relics,omitempty"`
+	Potions          []Potion   `json:"potions,omitempty"`
+}
+
+type DeckCard struct {
+	Name string `json:"name"`
+	Cost string `json:"cost"`
+}
+
+type Orb struct {
+	Name       string `json:"name"`
+	PassiveVal int    `json:"passive_val"`
+	EvokeVal   int    `json:"evoke_val"`
 }
 
 type BattleState struct {

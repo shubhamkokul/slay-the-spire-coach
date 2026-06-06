@@ -52,18 +52,27 @@ Otherwise: Go [path]. Why. One or two lines max.`
 
 // compactCombat — stripped combat state sent to Claude (~150 tokens vs ~1400)
 type compactCombat struct {
-	Act       int              `json:"act"`
-	Floor     int              `json:"floor"`
-	Energy    int              `json:"energy"`
-	MaxEnergy int              `json:"max_energy"`
-	HP        int              `json:"hp"`
-	MaxHP     int              `json:"max_hp"`
-	Block     int              `json:"block"`
-	Hand      []compactCard    `json:"hand"`
-	Powers    []compactPower   `json:"powers,omitempty"`
-	Relics    []string         `json:"relics"`
-	Potions   []compactPotion  `json:"potions,omitempty"`
-	Enemies   []compactEnemy   `json:"enemies"`
+	Act           int             `json:"act"`
+	Floor         int             `json:"floor"`
+	Energy        int             `json:"energy"`
+	MaxEnergy     int             `json:"max_energy"`
+	HP            int             `json:"hp"`
+	MaxHP         int             `json:"max_hp"`
+	Block         int             `json:"block"`
+	Hand          []compactCard   `json:"hand"`
+	Powers        []compactPower  `json:"powers,omitempty"`
+	Relics        []string        `json:"relics"`
+	Potions       []compactPotion `json:"potions,omitempty"`
+	Orbs          []compactOrb    `json:"orbs,omitempty"`
+	OrbSlots      int             `json:"orb_slots,omitempty"`
+	OrbEmptySlots int             `json:"orb_empty_slots,omitempty"`
+	Enemies       []compactEnemy  `json:"enemies"`
+}
+
+type compactOrb struct {
+	Name    string `json:"name"`
+	Passive int    `json:"passive"`
+	Evoke   int    `json:"evoke"`
 }
 
 type compactCard struct {
@@ -139,11 +148,18 @@ func buildCombatCompact(gs state.GameState) string {
 			})
 		}
 	}
+	orbs := make([]compactOrb, len(gs.Player.Orbs))
+	for i, o := range gs.Player.Orbs {
+		orbs[i] = compactOrb{Name: o.Name, Passive: o.PassiveVal, Evoke: o.EvokeVal}
+	}
+
 	b, _ := json.Marshal(compactCombat{
 		Act: gs.Run.Act, Floor: gs.Run.Floor,
 		Energy: gs.Player.Energy, MaxEnergy: gs.Player.MaxEnergy,
 		HP: gs.Player.HP, MaxHP: gs.Player.MaxHP, Block: gs.Player.Block,
-		Hand: hand, Powers: powers, Relics: relics, Potions: potions, Enemies: enemies,
+		Hand: hand, Powers: powers, Relics: relics, Potions: potions,
+		Orbs: orbs, OrbSlots: gs.Player.OrbSlots, OrbEmptySlots: gs.Player.OrbEmptySlots,
+		Enemies: enemies,
 	})
 	return string(b)
 }
@@ -165,14 +181,28 @@ func buildNonCombatCompact(gs state.GameState, raw json.RawMessage) string {
 		potions = append(potions, p.Name)
 	}
 
-	compactP, _ := json.Marshal(map[string]interface{}{
+	p := map[string]any{
 		"character": gs.Player.Character,
 		"hp":        gs.Player.HP,
 		"max_hp":    gs.Player.MaxHP,
 		"gold":      gs.Player.Gold,
 		"relics":    relics,
 		"potions":   potions,
-	})
+	}
+
+	// For states where deck composition drives the decision, include card names.
+	if gs.StateType == "card_reward" || gs.StateType == "rest_site" || gs.StateType == "rewards" {
+		all := make([]string, 0, len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
+		for _, c := range gs.Player.DrawPile {
+			all = append(all, c.Name)
+		}
+		for _, c := range gs.Player.DiscardPile {
+			all = append(all, c.Name)
+		}
+		p["deck"] = all
+	}
+
+	compactP, _ := json.Marshal(p)
 	data["player"] = compactP
 
 	out, _ := json.Marshal(data)
