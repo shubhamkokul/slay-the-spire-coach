@@ -16,14 +16,19 @@ Rules:
 - Only use cards where can_play is true
 - Track energy: subtract each card's cost as you go, stop when energy runs out
 - Never suggest a card you cannot afford
+- Factor in active powers/status on player and enemies (Strength, Weak, Vulnerable, Frail, etc.)
+- Factor in available potions if using one changes the outcome (mention it explicitly)
 
 One line response only:
-Play: [Card] → [Card] → ... = [damage] dmg, [enemy dies / X HP left]. Watch: [intent + number].`
+Play: [Card] → [Card] → ... = [damage] dmg, [enemy dies / X HP left]. Watch: [intent + number].
+If a potion changes the optimal line, add: Potion: [name] before the play line.`
 
 	case "card_reward":
 		return `Slay the Spire 2 coach. Card pick advice only.
 
-Take [Card] — [one reason].
+Consider the player's current relics, potions, and existing deck when evaluating synergy.
+
+Take [Card] — [one reason referencing deck/relic synergy].
 Skip the rest.`
 
 	case "rewards":
