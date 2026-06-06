@@ -14,10 +14,13 @@ type Client struct {
 	api anthropic.Client
 }
 
-func New() *Client {
+func New() (*Client, error) {
+	if os.Getenv("ANTHROPIC_API_KEY") == "" {
+		return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
+	}
 	return &Client{
 		api: anthropic.NewClient(),
-	}
+	}, nil
 }
 
 func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
@@ -27,9 +30,9 @@ func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
 
 	stream := c.api.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeSonnet4_6,
-		MaxTokens: 512,
+		MaxTokens: 150,
 		System: []anthropic.TextBlockParam{{
-			Text: prompt.System,
+			Text: prompt.System(trigger.State.StateType),
 		}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock(userMsg)),
@@ -54,9 +57,3 @@ func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
 	return nil
 }
 
-func init() {
-	if os.Getenv("ANTHROPIC_API_KEY") == "" {
-		fmt.Fprintln(os.Stderr, "error: ANTHROPIC_API_KEY not set")
-		os.Exit(1)
-	}
-}
