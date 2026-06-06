@@ -48,7 +48,8 @@ Rest / Smith [Card]. One sentence reason.`
 	case "shop":
 		return `Slay the Spire 2 coach. Shop advice only.
 
-Buy [item]. Skip [item]. Save gold if nothing fits.`
+Consider: cards, relics, potions, and card removal (removing a weak card is often the best purchase).
+Buy [item] / Remove [card]. Skip [item]. Save gold if nothing fits. One sentence reason.`
 
 	case "event":
 		return `Slay the Spire 2 coach. Event advice only.

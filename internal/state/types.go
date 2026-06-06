@@ -149,8 +149,12 @@ func Detect(prev, curr GameState, currRaw json.RawMessage) *Trigger {
 		if !advisable[curr.StateType] {
 			return nil
 		}
-		// For combat: don't fire here — hand is empty, wait for cards dealt below
+		// For combat: if cards already in hand on first poll, fire immediately.
+		// Otherwise return nil and let the cards dealt trigger below handle it.
 		if IsCombat(curr.StateType) {
+			if len(curr.Player.Hand) > 0 {
+				return &Trigger{Reason: "cards dealt", State: curr, Raw: currRaw}
+			}
 			return nil
 		}
 		return &Trigger{Reason: "entered " + curr.StateType, State: curr, Raw: currRaw}

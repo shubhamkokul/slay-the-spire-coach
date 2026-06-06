@@ -24,7 +24,7 @@ func New() (*Client, error) {
 func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
 	stream := c.api.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeHaiku4_5,
-		MaxTokens: 150,
+		MaxTokens: 200,
 		System: []anthropic.TextBlockParam{{
 			Text: prompt.System(trigger.State.StateType),
 		}},
