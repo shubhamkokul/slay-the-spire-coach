@@ -5,16 +5,21 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
 )
 
-const defaultAddr = "http://localhost:15526"
+const (
+	defaultAddr   = "http://localhost:15526"
+	stateFilePath = "/tmp/sts2-state.json"
+)
 
 type STS2Client struct {
-	http *http.Client
-	addr string
+	http      *http.Client
+	addr      string
+	lastDeck  []state.DeckCard // last seen non-empty deck, carried across states
 }
 
 func New(addr string) *STS2Client {
@@ -59,6 +64,18 @@ func (c *STS2Client) GetState() (state.GameState, json.RawMessage, error) {
 	if err := json.Unmarshal(body, &gs); err != nil {
 		return state.GameState{}, nil, fmt.Errorf("parse error: %w", err)
 	}
+
+	// Update last known deck whenever the API gives us one.
+	allCards := append(gs.Player.DrawPile, gs.Player.DiscardPile...)
+	if len(allCards) > 0 {
+		c.lastDeck = allCards
+	} else if len(c.lastDeck) > 0 {
+		// API returned empty piles (e.g. post-combat card reward) — restore from cache.
+		gs.Player.DrawPile = c.lastDeck
+	}
+
+	// Always write latest state to tmp for debugging and future DB migration.
+	os.WriteFile(stateFilePath, body, 0644)
 
 	return gs, json.RawMessage(body), nil
 }
