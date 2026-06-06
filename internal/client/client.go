@@ -67,7 +67,7 @@ func (c *STS2Client) GetState() (state.GameState, json.RawMessage, error) {
 
 	// During combat, capture the full deck: hand + draw + discard.
 	// Outside combat the mod omits deck data entirely, so we restore from cache.
-	if state.IsCombat(gs.StateType) {
+	if state.IsCombat(gs.StateType) || gs.StateType == "card_select" || gs.StateType == "hand_select" {
 		full := make([]state.DeckCard, 0, len(gs.Player.Hand)+len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
 		for _, card := range gs.Player.Hand {
 			name := card.Name
