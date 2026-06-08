@@ -47,22 +47,23 @@ func startingDeck(character string) []DeckEntry {
 	return deck
 }
 
-// isTemporary returns true for cards that are added during combat and should
-// be purged when combat ends. Uses card type from API when available,
-// falls back to a known name list for draw/discard pile cards which lack type.
+// isTemporary returns true for Status-type cards added during combat.
+// These are purged when combat ends and must not trigger upgrade detection.
+//
+// Primary signal: card type from API ("Status"). This covers all Status cards
+// regardless of name and correctly excludes permanent cards added by powers
+// or card effects (Shiv, Bite, Miracle, etc.) which have Attack/Skill type.
+//
+// Fallback name list: draw/discard pile entries lack type in the API response.
+// Only pure Status cards go here — NOT cards that can be permanent additions.
 func isTemporary(name, cardType string) bool {
 	if cardType == "Status" {
 		return true
 	}
-	// Known status card names — expanded as new ones are discovered in STS2.
+	// Fallback for pile cards where type is absent.
+	// Only add names that are ALWAYS temporary — never permanent acquisitions.
 	switch name {
-	case "Slimed", "Wound", "Dazed", "Burn", "Void", "Parasite",
-		"Pride", "Normality", "Decay", "Regret", "Shame", "Doubt",
-		"Injury", "Pain", "Clumsy", "Depression", "Curse of the Bell",
-		"Writhe", "Necronomicurse", "Bite", "Shiv":
-		// Note: Bite and Shiv can be permanent (via relics/cards) — reconcile
-		// will only mark them temporary if they appear unexpectedly mid-combat.
-		// For now include them; revisit if false positives appear.
+	case "Slimed", "Wound", "Dazed", "Burn", "Void":
 		return true
 	}
 	return false
