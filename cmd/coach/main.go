@@ -43,6 +43,7 @@ func main() {
 	fmt.Println("Ready. Session updating in background every 2s.")
 	fmt.Println("  Enter     → full status snapshot")
 	fmt.Println("  deck      → deck only")
+	fmt.Println("  history   → version log of every change this run")
 	fmt.Println("  new       → reset session")
 	fmt.Println("  Ctrl+C    → quit")
 
@@ -79,13 +80,15 @@ func main() {
 			fmt.Print(sts2.Session.PrintStatus())
 		case "deck":
 			fmt.Print(sts2.Session.PrintDeck())
+		case "history":
+			fmt.Print(sts2.Session.PrintHistory())
 		case "debug":
+			fmt.Printf("version: %d\n", sts2.Session.Version)
 			fmt.Printf("relics(%d): %+v\n", len(sts2.Session.Relics), sts2.Session.Relics)
 			fmt.Printf("potions(%d): %+v\n", len(sts2.Session.Potions), sts2.Session.Potions)
 			fmt.Printf("deck(%d)\n", len(sts2.Session.Deck))
-			fmt.Printf("events(%d): %+v\n", len(sts2.Session.Events), sts2.Session.Events)
 		default:
-			fmt.Println("Commands: Enter (status), deck, debug, new")
+			fmt.Println("Commands: Enter (status), deck, history, debug, new")
 		}
 	}
 }

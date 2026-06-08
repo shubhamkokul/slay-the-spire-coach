@@ -9,7 +9,7 @@ import (
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
 )
 
-// ── Entry types ──────────────────────────────────────────────────────────────
+// ── Entry types ───────────────────────────────────────────────────────────────
 
 type DeckEntry struct {
 	Name     string
@@ -57,6 +57,25 @@ type Event struct {
 	Detail string
 }
 
+// ── Versioning ────────────────────────────────────────────────────────────────
+
+// Change records one atomic change at a specific version.
+type Change struct {
+	Field  string // "hp", "gold", "floor", "deck", "relic", "potion", "status"
+	Type   string // "added", "removed", "upgraded", "changed"
+	Detail string // human-readable: "Shatter", "75→62", "Floor 3→4"
+}
+
+// VersionEntry is a snapshot of what changed at a given version.
+type VersionEntry struct {
+	Version   int64
+	Timestamp time.Time
+	Floor     int
+	Act       int
+	StateType string
+	Changes   []Change
+}
+
 // ── Session ───────────────────────────────────────────────────────────────────
 
 type Session struct {
@@ -65,6 +84,8 @@ type Session struct {
 	Act       int
 	Floor     int
 	StateType string
+	Version   int64
+	VersionLog []VersionEntry
 
 	// Player snapshot
 	HP    int
@@ -76,9 +97,9 @@ type Session struct {
 	Relics  []RelicEntry
 	Potions []PotionEntry
 	Status  []StatusEntry
-	Enemies []EnemySnapshot // non-nil only in combat states
+	Enemies []EnemySnapshot
 
-	// Run log
+	// Legacy event log — kept for compatibility
 	Events    []Event
 	StartedAt time.Time
 
@@ -95,12 +116,75 @@ func New(character string) *Session {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 
-// Update syncs every aspect of the session from the latest GameState.
 func (s *Session) Update(curr state.GameState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	prev := s.prev
 	defer func() { s.prev = curr }()
+
+	var changes []Change
+
+	// Floor / act
+	if prev.Run.Floor != curr.Run.Floor && curr.Run.Floor > 0 {
+		changes = append(changes, Change{
+			Field:  "floor",
+			Type:   "changed",
+			Detail: fmt.Sprintf("Floor %d→%d", prev.Run.Floor, curr.Run.Floor),
+		})
+	}
+
+	// HP
+	if prev.Player.HP != curr.Player.HP && curr.Player.HP > 0 {
+		changes = append(changes, Change{
+			Field:  "hp",
+			Type:   "changed",
+			Detail: fmt.Sprintf("%d→%d", prev.Player.HP, curr.Player.HP),
+		})
+	}
+
+	// Gold
+	if prev.Player.Gold != curr.Player.Gold && curr.Player.Gold > 0 {
+		changes = append(changes, Change{
+			Field:  "gold",
+			Type:   "changed",
+			Detail: fmt.Sprintf("%d→%d", prev.Player.Gold, curr.Player.Gold),
+		})
+	}
+
+	// Relics
+	relicChanges := s.syncRelics(prev, curr)
+	changes = append(changes, relicChanges...)
+
+	// Potions
+	potionChanges := s.syncPotions(prev, curr)
+	changes = append(changes, potionChanges...)
+
+	// Status effects
+	s.syncStatus(curr)
+
+	// Enemies
+	s.syncEnemies(curr)
+
+	// Deck — reconcile from API during combat
+	var deckChanges []Change
+	if state.IsCombat(curr.StateType) || curr.StateType == "card_select" || curr.StateType == "hand_select" {
+		deckChanges = s.reconcileDeck(curr)
+		changes = append(changes, deckChanges...)
+	}
+
+	// Bump version if anything changed.
+	if len(changes) > 0 {
+		s.Version++
+		s.VersionLog = append(s.VersionLog, VersionEntry{
+			Version:   s.Version,
+			Timestamp: time.Now(),
+			Floor:     curr.Run.Floor,
+			Act:       curr.Run.Act,
+			StateType: curr.StateType,
+			Changes:   changes,
+		})
+	}
 
 	s.Act = curr.Run.Act
 	s.Floor = curr.Run.Floor
@@ -108,22 +192,65 @@ func (s *Session) Update(curr state.GameState) {
 	s.HP = curr.Player.HP
 	s.MaxHP = curr.Player.MaxHP
 	s.Gold = curr.Player.Gold
-
-	s.syncPotions(curr)
-	s.syncStatus(curr)
-	s.syncEnemies(curr)
-	s.detectRelicChanges(prev, curr)
-
-	if state.IsCombat(curr.StateType) || curr.StateType == "card_select" || curr.StateType == "hand_select" {
-		s.reconcileDeck(curr)
-	}
 }
 
-func (s *Session) syncPotions(curr state.GameState) {
+func (s *Session) syncRelics(prev, curr state.GameState) []Change {
+	if len(curr.Player.Relics) == 0 {
+		return nil
+	}
+	prevRelics := make(map[string]bool, len(prev.Player.Relics))
+	for _, r := range prev.Player.Relics {
+		prevRelics[r.Name] = true
+	}
+	existingSources := make(map[string]string, len(s.Relics))
+	for _, r := range s.Relics {
+		existingSources[r.Name] = r.Source
+	}
+
+	var changes []Change
+	s.Relics = s.Relics[:0]
+	for _, r := range curr.Player.Relics {
+		source := existingSources[r.Name]
+		if !prevRelics[r.Name] {
+			source = relicSource(curr.StateType)
+			changes = append(changes, Change{Field: "relic", Type: "added", Detail: r.Name})
+			s.logEvent(curr.Run.Floor, curr.StateType, "relic_added", r.Name)
+		}
+		if source == "" {
+			source = "unknown"
+		}
+		s.Relics = append(s.Relics, RelicEntry{Name: r.Name, Source: source, Floor: curr.Run.Floor})
+	}
+	return changes
+}
+
+func (s *Session) syncPotions(prev, curr state.GameState) []Change {
+	prevPotions := make(map[string]bool, len(prev.Player.Potions))
+	for _, p := range prev.Player.Potions {
+		prevPotions[p.Name] = true
+	}
+	currPotions := make(map[string]bool, len(curr.Player.Potions))
+	for _, p := range curr.Player.Potions {
+		currPotions[p.Name] = true
+	}
+
+	var changes []Change
+	for name := range currPotions {
+		if !prevPotions[name] {
+			changes = append(changes, Change{Field: "potion", Type: "added", Detail: name})
+		}
+	}
+	for name := range prevPotions {
+		if !currPotions[name] {
+			changes = append(changes, Change{Field: "potion", Type: "removed", Detail: name + " (used/discarded)"})
+		}
+	}
+
 	s.Potions = s.Potions[:0]
 	for _, p := range curr.Player.Potions {
 		s.Potions = append(s.Potions, PotionEntry{Name: p.Name, Slot: p.Slot})
 	}
+	return changes
 }
 
 func (s *Session) syncStatus(curr state.GameState) {
@@ -163,34 +290,7 @@ func (s *Session) syncEnemies(curr state.GameState) {
 	}
 }
 
-func (s *Session) detectRelicChanges(prev, curr state.GameState) {
-	if len(curr.Player.Relics) == 0 {
-		return
-	}
-	prevRelics := make(map[string]bool, len(prev.Player.Relics))
-	for _, r := range prev.Player.Relics {
-		prevRelics[r.Name] = true
-	}
-	// Save existing sources before clearing.
-	existingSources := make(map[string]string, len(s.Relics))
-	for _, r := range s.Relics {
-		existingSources[r.Name] = r.Source
-	}
-	s.Relics = s.Relics[:0]
-	for _, r := range curr.Player.Relics {
-		source := existingSources[r.Name]
-		if !prevRelics[r.Name] {
-			source = relicSource(curr.StateType)
-			s.logEvent(curr.Run.Floor, curr.StateType, "relic_added", r.Name)
-		}
-		if source == "" {
-			source = "unknown"
-		}
-		s.Relics = append(s.Relics, RelicEntry{Name: r.Name, Source: source, Floor: curr.Run.Floor})
-	}
-}
-
-func (s *Session) reconcileDeck(curr state.GameState) {
+func (s *Session) reconcileDeck(curr state.GameState) []Change {
 	apiCards := make(map[string]int)
 	for _, c := range curr.Player.Hand {
 		name := c.Name
@@ -211,6 +311,7 @@ func (s *Session) reconcileDeck(curr state.GameState) {
 		sessionCards[d.Display()]++
 	}
 
+	var changes []Change
 	for name, apiCount := range apiCards {
 		diff := apiCount - sessionCards[name]
 		for range diff {
@@ -221,16 +322,18 @@ func (s *Session) reconcileDeck(curr state.GameState) {
 				Source:   "reconcile",
 				Floor:    curr.Run.Floor,
 			})
-			s.logEvent(curr.Run.Floor, curr.StateType, "card_added", name+" (reconciled)")
+			changes = append(changes, Change{Field: "deck", Type: "added", Detail: name + " (reconciled)"})
+			s.logEvent(curr.Run.Floor, curr.StateType, "card_added", name)
 		}
 	}
-
 	for i, entry := range s.Deck {
-		if !entry.Upgraded && apiCards[entry.Name+"+"] > 0 && sessionCards[entry.Name+"+"] < apiCards[entry.Name+"+"] {
+		if !entry.Upgraded && apiCards[entry.Name+"+"] > sessionCards[entry.Name+"+"] {
 			s.Deck[i].Upgraded = true
+			changes = append(changes, Change{Field: "deck", Type: "upgraded", Detail: entry.Name})
 			s.logEvent(curr.Run.Floor, curr.StateType, "card_upgraded", entry.Name)
 		}
 	}
+	return changes
 }
 
 func relicSource(stateType string) string {
@@ -264,13 +367,13 @@ func (s *Session) logEvent(floor int, screen, eventType, detail string) {
 func (s *Session) PrintStatus() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	var sb strings.Builder
+	fmt.Fprintf(&sb, "\n%s\n", strings.Repeat("═", 50))
+	fmt.Fprintf(&sb, "  %s  |  Act %d Floor %d  |  v%d\n", s.Character, s.Act, s.Floor, s.Version)
+	fmt.Fprintf(&sb, "  Screen: %s\n", s.StateType)
+	fmt.Fprintf(&sb, "%s\n", strings.Repeat("─", 50))
 
-	fmt.Fprintf(&sb, "\n%s\n", strings.Repeat("═", 48))
-	fmt.Fprintf(&sb, "  %s  |  Act %d Floor %d  |  %s\n", s.Character, s.Act, s.Floor, s.StateType)
-	fmt.Fprintf(&sb, "%s\n", strings.Repeat("─", 48))
-
-	// Player
 	fmt.Fprintf(&sb, "  HP: %d/%d    Gold: %d\n", s.HP, s.MaxHP, s.Gold)
 
 	if len(s.Status) > 0 {
@@ -281,7 +384,6 @@ func (s *Session) PrintStatus() string {
 		fmt.Fprintf(&sb, "  Status: %s\n", strings.Join(parts, ", "))
 	}
 
-	// Potions
 	if len(s.Potions) > 0 {
 		names := make([]string, len(s.Potions))
 		for i, p := range s.Potions {
@@ -290,7 +392,6 @@ func (s *Session) PrintStatus() string {
 		fmt.Fprintf(&sb, "  Potions: %s\n", strings.Join(names, ", "))
 	}
 
-	// Relics
 	if len(s.Relics) > 0 {
 		names := make([]string, len(s.Relics))
 		for i, r := range s.Relics {
@@ -299,8 +400,7 @@ func (s *Session) PrintStatus() string {
 		fmt.Fprintf(&sb, "  Relics: %s\n", strings.Join(names, ", "))
 	}
 
-	// Deck
-	fmt.Fprintf(&sb, "%s\n", strings.Repeat("─", 48))
+	fmt.Fprintf(&sb, "%s\n", strings.Repeat("─", 50))
 	counts := make(map[string]int)
 	order := []string{}
 	for _, d := range s.Deck {
@@ -315,12 +415,11 @@ func (s *Session) PrintStatus() string {
 		fmt.Fprintf(&sb, "    %dx %s\n", counts[name], name)
 	}
 
-	// Enemies (combat only)
 	if len(s.Enemies) > 0 {
-		fmt.Fprintf(&sb, "%s\n", strings.Repeat("─", 48))
+		fmt.Fprintf(&sb, "%s\n", strings.Repeat("─", 50))
 		fmt.Fprintf(&sb, "  Enemies\n")
 		for _, e := range s.Enemies {
-			fmt.Fprintf(&sb, "    %s  HP %d/%d  Block %d\n", e.Name, e.HP, e.MaxHP, e.Block)
+			fmt.Fprintf(&sb, "    %-20s HP %d/%d  Block %d\n", e.Name, e.HP, e.MaxHP, e.Block)
 			if e.Intent != "" {
 				fmt.Fprintf(&sb, "    → %s\n", e.Intent)
 			}
@@ -330,13 +429,14 @@ func (s *Session) PrintStatus() string {
 		}
 	}
 
-	fmt.Fprintf(&sb, "%s\n", strings.Repeat("═", 48))
+	fmt.Fprintf(&sb, "%s\n", strings.Repeat("═", 50))
 	return sb.String()
 }
 
 func (s *Session) PrintDeck() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+
 	var sb strings.Builder
 	counts := make(map[string]int)
 	order := []string{}
@@ -347,7 +447,7 @@ func (s *Session) PrintDeck() string {
 		}
 		counts[key]++
 	}
-	fmt.Fprintf(&sb, "Deck (%d cards) — %s Act %d Floor %d\n", len(s.Deck), s.Character, s.Act, s.Floor)
+	fmt.Fprintf(&sb, "Deck (%d cards) — %s Act %d Floor %d  v%d\n", len(s.Deck), s.Character, s.Act, s.Floor, s.Version)
 	sb.WriteString(strings.Repeat("─", 40))
 	sb.WriteByte('\n')
 	for _, name := range order {
@@ -356,7 +456,30 @@ func (s *Session) PrintDeck() string {
 	return sb.String()
 }
 
+// PrintHistory shows the version log — every change across the run.
+func (s *Session) PrintHistory() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.VersionLog) == 0 {
+		return "No changes recorded yet.\n"
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Run history — %s  (%d versions)\n", s.Character, s.Version)
+	sb.WriteString(strings.Repeat("─", 50))
+	sb.WriteByte('\n')
+	for _, v := range s.VersionLog {
+		fmt.Fprintf(&sb, "  v%-4d  Act %d Floor %-3d  [%s]\n", v.Version, v.Act, v.Floor, v.StateType)
+		for _, c := range v.Changes {
+			fmt.Fprintf(&sb, "         %-8s %-10s %s\n", c.Field, c.Type, c.Detail)
+		}
+	}
+	return sb.String()
+}
+
 func (s *Session) DeckNames() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	names := make([]string, len(s.Deck))
 	for i, d := range s.Deck {
 		names[i] = d.Display()
