@@ -1,8 +1,8 @@
 package session
 
 // startingDecks holds the known starting deck for each character.
-// Defect Zap count (1 vs 4) needs live verification — research says 1x for STS2.
-// Regent and Necrobinder starting decks also need live verification.
+// Defect verified live: 4x Strike, 4x Defend, 1x Zap, 1x Dualcast.
+// Regent and Necrobinder starting decks still need live verification.
 var startingDecks = map[string][]DeckEntry{
 	"The Ironclad": repeat("Strike", 5, "start", 0,
 		repeat("Defend", 4, "start", 0,
