@@ -1,9 +1,11 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -14,6 +16,7 @@ import (
 
 const (
 	defaultAddr   = "http://localhost:15526"
+	pollInterval  = 2 * time.Second
 	stateFilePath = "/tmp/sts2-state.json"
 )
 
@@ -47,6 +50,31 @@ func (c *STS2Client) Ping() error {
 	return nil
 }
 
+// ResetSession clears the current session so the next poll initializes
+// a fresh one for whatever character is currently active.
+func (c *STS2Client) ResetSession() {
+	c.Session = nil
+}
+
+// Poll starts a background goroutine that fetches game state every 2 seconds
+// and keeps the session and store up to date automatically.
+func (c *STS2Client) Poll(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, _, err := c.GetState(); err != nil {
+					log.Printf("[poll] %v", err)
+				}
+			}
+		}
+	}()
+}
+
 func (c *STS2Client) GetState() (state.GameState, json.RawMessage, error) {
 	resp, err := c.http.Get(c.addr + "/api/v1/singleplayer")
 	if err != nil {
@@ -68,21 +96,19 @@ func (c *STS2Client) GetState() (state.GameState, json.RawMessage, error) {
 		return state.GameState{}, nil, fmt.Errorf("parse error: %w", err)
 	}
 
-	// New run or first call — initialize session for this character.
 	if gs.Player.Character != "" {
+		// New run or character changed — initialize fresh session.
 		if c.Session == nil || c.Session.Character != gs.Player.Character {
 			c.Session = session.New(gs.Player.Character)
-			c.store.Save(c.Session)
 		}
 		c.Session.Update(gs)
 		c.store.Save(c.Session)
 
-		// Restore deck into GameState so prompt builders still work.
-		if len(gs.Player.DrawPile) == 0 && c.Session != nil {
+		// Restore deck into GameState for prompt builders.
+		if len(gs.Player.DrawPile) == 0 && len(c.Session.Deck) > 0 {
 			for _, d := range c.Session.Deck {
 				gs.Player.DrawPile = append(gs.Player.DrawPile, state.DeckCard{
 					Name: d.Display(),
-					Cost: "",
 				})
 			}
 		}

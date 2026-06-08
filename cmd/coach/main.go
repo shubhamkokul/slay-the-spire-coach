@@ -26,6 +26,7 @@ func main() {
 	store := session.NewMemoryStore()
 	sts2 := client.New(*addr, store)
 
+	// Wait for mod to be reachable.
 	for {
 		if err := sts2.Ping(); err == nil {
 			break
@@ -33,12 +34,17 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 
-	fmt.Println("Ready.")
-	fmt.Println("  deck  → show current deck")
-	fmt.Println("  Ctrl+C → quit")
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Background poller — keeps session and store current without any user input.
+	sts2.Poll(ctx)
+
+	fmt.Println("Ready. Session updating in background every 2s.")
+	fmt.Println("  Enter     → full status snapshot")
+	fmt.Println("  deck      → deck only")
+	fmt.Println("  new       → reset session")
+	fmt.Println("  Ctrl+C    → quit")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -57,21 +63,24 @@ func main() {
 
 		line := strings.TrimSpace(scanner.Text())
 
-		// Refresh state on every command.
-		if _, _, err := sts2.GetState(); err != nil {
-			log.Printf("error: %v", err)
+		if line == "new" {
+			sts2.ResetSession()
+			fmt.Println("Session reset — will reinitialize on next poll.")
+			continue
+		}
+
+		if sts2.Session == nil {
+			fmt.Println("No active session yet — waiting for game state...")
 			continue
 		}
 
 		switch line {
+		case "":
+			fmt.Print(sts2.Session.PrintStatus())
 		case "deck":
-			if sts2.Session == nil {
-				fmt.Println("No active session — start a run first.")
-				continue
-			}
-			fmt.Println(sts2.Session.PrintDeck())
+			fmt.Print(sts2.Session.PrintDeck())
 		default:
-			fmt.Println("Commands: deck")
+			fmt.Println("Commands: Enter (status), deck, new")
 		}
 	}
 }
