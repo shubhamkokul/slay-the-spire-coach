@@ -13,9 +13,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/shubhamkokul/slay-the-spire-coach/internal/claude"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/client"
-	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
+	"github.com/shubhamkokul/slay-the-spire-coach/internal/session"
 )
 
 func main() {
@@ -24,16 +23,8 @@ func main() {
 	addr := flag.String("addr", "", "STS2MCP address (default http://localhost:15526)")
 	flag.Parse()
 
-	sts2 := client.New(*addr)
-	ai, err := claude.New()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer func() {
-		fmt.Println("\n" + ai.SessionSummary())
-		ai.Close()
-	}()
+	store := session.NewMemoryStore()
+	sts2 := client.New(*addr, store)
 
 	for {
 		if err := sts2.Ping(); err == nil {
@@ -43,8 +34,8 @@ func main() {
 	}
 
 	fmt.Println("Ready.")
-	fmt.Println("  Enter          → advice for current state")
-	fmt.Println("  Type + Enter   → ask a question")
+	fmt.Println("  deck  → show current deck")
+	fmt.Println("  Ctrl+C → quit")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -66,29 +57,21 @@ func main() {
 
 		line := strings.TrimSpace(scanner.Text())
 
-		curr, raw, err := sts2.GetState()
-		if err != nil {
+		// Refresh state on every command.
+		if _, _, err := sts2.GetState(); err != nil {
 			log.Printf("error: %v", err)
 			continue
 		}
 
-		var callErr error
-		if line == "" {
-			trigger := &state.Trigger{
-				Reason: curr.StateType,
-				State:  curr,
-				Raw:    raw,
+		switch line {
+		case "deck":
+			if sts2.Session == nil {
+				fmt.Println("No active session — start a run first.")
+				continue
 			}
-			callErr = ai.Advise(ctx, trigger)
-		} else {
-			callErr = ai.Ask(ctx, line, curr, raw)
-		}
-
-		if callErr != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			log.Printf("claude error: %v", callErr)
+			fmt.Println(sts2.Session.PrintDeck())
+		default:
+			fmt.Println("Commands: deck")
 		}
 	}
 }

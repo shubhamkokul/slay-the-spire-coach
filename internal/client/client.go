@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/shubhamkokul/slay-the-spire-coach/internal/session"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
 )
 
@@ -17,18 +18,20 @@ const (
 )
 
 type STS2Client struct {
-	http      *http.Client
-	addr      string
-	lastDeck  []state.DeckCard // last seen non-empty deck, carried across states
+	http    *http.Client
+	addr    string
+	Session *session.Session
+	store   session.Store
 }
 
-func New(addr string) *STS2Client {
+func New(addr string, store session.Store) *STS2Client {
 	if addr == "" {
 		addr = defaultAddr
 	}
 	return &STS2Client{
-		http: &http.Client{Timeout: 5 * time.Second},
-		addr: addr,
+		http:  &http.Client{Timeout: 5 * time.Second},
+		addr:  addr,
+		store: store,
 	}
 }
 
@@ -65,27 +68,26 @@ func (c *STS2Client) GetState() (state.GameState, json.RawMessage, error) {
 		return state.GameState{}, nil, fmt.Errorf("parse error: %w", err)
 	}
 
-	// During combat, capture the full deck: hand + draw + discard.
-	// Outside combat the mod omits deck data entirely, so we restore from cache.
-	if state.IsCombat(gs.StateType) || gs.StateType == "card_select" || gs.StateType == "hand_select" {
-		full := make([]state.DeckCard, 0, len(gs.Player.Hand)+len(gs.Player.DrawPile)+len(gs.Player.DiscardPile))
-		for _, card := range gs.Player.Hand {
-			name := card.Name
-			if card.IsUpgraded {
-				name += "+"
+	// New run or first call — initialize session for this character.
+	if gs.Player.Character != "" {
+		if c.Session == nil || c.Session.Character != gs.Player.Character {
+			c.Session = session.New(gs.Player.Character)
+			c.store.Save(c.Session)
+		}
+		c.Session.Update(gs)
+		c.store.Save(c.Session)
+
+		// Restore deck into GameState so prompt builders still work.
+		if len(gs.Player.DrawPile) == 0 && c.Session != nil {
+			for _, d := range c.Session.Deck {
+				gs.Player.DrawPile = append(gs.Player.DrawPile, state.DeckCard{
+					Name: d.Display(),
+					Cost: "",
+				})
 			}
-			full = append(full, state.DeckCard{Name: name, Cost: card.Cost})
 		}
-		full = append(full, gs.Player.DrawPile...)
-		full = append(full, gs.Player.DiscardPile...)
-		if len(full) > 0 {
-			c.lastDeck = full
-		}
-	} else if len(gs.Player.DrawPile) == 0 && len(c.lastDeck) > 0 {
-		gs.Player.DrawPile = c.lastDeck
 	}
 
-	// Always write latest state to tmp for debugging and future DB migration.
 	os.WriteFile(stateFilePath, body, 0644)
 
 	return gs, json.RawMessage(body), nil
