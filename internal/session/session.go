@@ -104,7 +104,8 @@ type Session struct {
 	Events    []Event
 	StartedAt time.Time
 
-	prev state.GameState
+	pendingCardReward []string // card names offered at last card_reward screen
+	prev              state.GameState
 }
 
 func New(character string) *Session {
@@ -172,6 +173,15 @@ func (s *Session) Update(curr state.GameState) {
 	nowInCombat := state.IsCombat(curr.StateType) || curr.StateType == "hand_select"
 	if wasInCombat && !nowInCombat {
 		s.purgeTempCards()
+	}
+
+	// Snapshot offered cards on entering card_reward so reconcile can
+	// attribute the pick correctly instead of logging it as "reconcile".
+	if curr.StateType == "card_reward" && curr.CardReward != nil {
+		s.pendingCardReward = s.pendingCardReward[:0]
+		for _, c := range curr.CardReward.Cards {
+			s.pendingCardReward = append(s.pendingCardReward, c.Name)
+		}
 	}
 
 	// card_select: API gives us the full deck in card_select.cards.
@@ -416,6 +426,12 @@ func (s *Session) reconcileDeck(curr state.GameState) []Change {
 		sessionCards[d.Display()]++
 	}
 
+	// Build lookup of cards offered at last card_reward for source attribution.
+	offeredAtReward := make(map[string]bool, len(s.pendingCardReward))
+	for _, name := range s.pendingCardReward {
+		offeredAtReward[name] = true
+	}
+
 	var changes []Change
 	for name, info := range apiCards {
 		diff := info.count - sessionCards[name]
@@ -423,21 +439,30 @@ func (s *Session) reconcileDeck(curr state.GameState) []Change {
 			upgraded := strings.HasSuffix(name, "+")
 			baseName := strings.TrimSuffix(name, "+")
 			temp := isTemporary(baseName, info.cardType)
+
+			source := "reconcile"
+			if offeredAtReward[baseName] {
+				source = "card_reward"
+			}
+
 			s.Deck = append(s.Deck, DeckEntry{
 				Name:      baseName,
 				Upgraded:  upgraded,
 				Temporary: temp,
-				Source:    "reconcile",
+				Source:    source,
 				Floor:     curr.Run.Floor,
 			})
 			label := name
 			if temp {
 				label += " (temp)"
 			}
-			changes = append(changes, Change{Field: "deck", Type: "added", Detail: label + " (reconciled)"})
+			changes = append(changes, Change{Field: "deck", Type: "added", Detail: fmt.Sprintf("%s (%s)", label, source)})
 			s.logEvent(curr.Run.Floor, curr.StateType, "card_added", label)
 		}
 	}
+
+	// Clear pending reward once reconciled.
+	s.pendingCardReward = s.pendingCardReward[:0]
 
 	// Only check upgrades on permanent cards — skip temporaries.
 	for i, entry := range s.Deck {
