@@ -7,11 +7,23 @@ import (
 )
 
 type GameState struct {
-	StateType string          `json:"state_type"`
-	Run       RunState        `json:"run"`
-	Player    PlayerState     `json:"player"`
-	Battle    *BattleState    `json:"battle,omitempty"`
-	Raw       json.RawMessage `json:"-"`
+	StateType  string           `json:"state_type"`
+	Run        RunState         `json:"run"`
+	Player     PlayerState      `json:"player"`
+	Battle     *BattleState     `json:"battle,omitempty"`
+	CardSelect *CardSelectState `json:"card_select,omitempty"`
+	CardReward *CardRewardState `json:"card_reward,omitempty"`
+	Raw        json.RawMessage  `json:"-"`
+}
+
+type CardSelectState struct {
+	ScreenType string `json:"screen_type"` // "upgrade", "transform", "remove", "exhaust"
+	Prompt     string `json:"prompt"`
+	Cards      []Card `json:"cards"`
+}
+
+type CardRewardState struct {
+	Cards []Card `json:"cards"`
 }
 
 type RunState struct {

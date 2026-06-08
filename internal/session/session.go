@@ -168,18 +168,23 @@ func (s *Session) Update(curr state.GameState) {
 	s.syncEnemies(curr)
 
 	// Purge temporary cards when leaving combat.
-	wasInCombat := state.IsCombat(prev.StateType) || prev.StateType == "card_select" || prev.StateType == "hand_select"
-	nowInCombat := state.IsCombat(curr.StateType) || curr.StateType == "card_select" || curr.StateType == "hand_select"
+	wasInCombat := state.IsCombat(prev.StateType) || prev.StateType == "hand_select"
+	nowInCombat := state.IsCombat(curr.StateType) || curr.StateType == "hand_select"
 	if wasInCombat && !nowInCombat {
 		s.purgeTempCards()
 	}
 
-	// Deck — reconcile from API during combat.
+	// card_select: API gives us the full deck in card_select.cards.
+	// Sync it directly and detect what operation just completed on transition out.
 	var deckChanges []Change
-	if nowInCombat {
+	if curr.StateType == "card_select" && curr.CardSelect != nil {
+		deckChanges = s.syncFromCardSelect(curr)
+	} else if prev.StateType == "card_select" && prev.CardSelect != nil {
+		deckChanges = s.applyCardSelectResult(prev, curr)
+	} else if nowInCombat {
 		deckChanges = s.reconcileDeck(curr)
-		changes = append(changes, deckChanges...)
 	}
+	changes = append(changes, deckChanges...)
 
 	// Bump version if anything changed.
 	if len(changes) > 0 {
@@ -296,6 +301,83 @@ func (s *Session) syncEnemies(curr state.GameState) {
 			Status: epow,
 		})
 	}
+}
+
+// syncFromCardSelect rebuilds the permanent deck from card_select.cards,
+// which is the authoritative full deck the API exposes during this state.
+func (s *Session) syncFromCardSelect(curr state.GameState) []Change {
+	if curr.CardSelect == nil {
+		return nil
+	}
+	apiCards := make(map[string]int)
+	for _, c := range curr.CardSelect.Cards {
+		name := c.Name
+		if c.IsUpgraded {
+			name += "+"
+		}
+		apiCards[name]++
+	}
+
+	sessionCards := make(map[string]int)
+	for _, d := range s.Deck {
+		if !d.Temporary {
+			sessionCards[d.Display()]++
+		}
+	}
+
+	var changes []Change
+	for name, apiCount := range apiCards {
+		diff := apiCount - sessionCards[name]
+		for range diff {
+			upgraded := strings.HasSuffix(name, "+")
+			s.Deck = append(s.Deck, DeckEntry{
+				Name:     strings.TrimSuffix(name, "+"),
+				Upgraded: upgraded,
+				Source:   "reconcile",
+				Floor:    curr.Run.Floor,
+			})
+			changes = append(changes, Change{Field: "deck", Type: "added", Detail: name + " (card_select sync)"})
+		}
+	}
+	return changes
+}
+
+// applyCardSelectResult detects what changed when leaving a card_select screen.
+func (s *Session) applyCardSelectResult(prev, curr state.GameState) []Change {
+	if prev.CardSelect == nil {
+		return nil
+	}
+	screenType := prev.CardSelect.ScreenType
+	var changes []Change
+
+	switch screenType {
+	case "upgrade":
+		if c := s.applyUpgrade(prev.CardSelect.Cards, curr.Run.Floor); c != nil {
+			changes = append(changes, *c)
+		}
+	case "transform":
+		changes = append(changes, Change{Field: "deck", Type: "changed", Detail: "transform pending — replacement via card_reward"})
+		s.logEvent(curr.Run.Floor, "card_select", "card_transform_pending", prev.CardSelect.Prompt)
+	case "remove":
+		changes = append(changes, Change{Field: "deck", Type: "changed", Detail: "remove pending"})
+		s.logEvent(curr.Run.Floor, "card_select", "card_remove_pending", prev.CardSelect.Prompt)
+	}
+
+	return changes
+}
+
+func (s *Session) applyUpgrade(offered []state.Card, floor int) *Change {
+	for _, c := range offered {
+		for i, d := range s.Deck {
+			if d.Name == c.Name && !d.Upgraded && !d.Temporary {
+				s.Deck[i].Upgraded = true
+				s.logEvent(floor, "card_select", "card_upgraded", c.Name)
+				ch := Change{Field: "deck", Type: "upgraded", Detail: c.Name}
+				return &ch
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Session) reconcileDeck(curr state.GameState) []Change {
