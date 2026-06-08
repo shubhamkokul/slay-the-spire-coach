@@ -45,6 +45,7 @@ type PlayerState struct {
 type DeckCard struct {
 	Name string `json:"name"`
 	Cost string `json:"cost"`
+	Type string `json:"type,omitempty"` // "Attack", "Skill", "Power", "Status", "Curse"
 }
 
 type Orb struct {

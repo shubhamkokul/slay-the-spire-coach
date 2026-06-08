@@ -47,6 +47,27 @@ func startingDeck(character string) []DeckEntry {
 	return deck
 }
 
+// isTemporary returns true for cards that are added during combat and should
+// be purged when combat ends. Uses card type from API when available,
+// falls back to a known name list for draw/discard pile cards which lack type.
+func isTemporary(name, cardType string) bool {
+	if cardType == "Status" {
+		return true
+	}
+	// Known status card names — expanded as new ones are discovered in STS2.
+	switch name {
+	case "Slimed", "Wound", "Dazed", "Burn", "Void", "Parasite",
+		"Pride", "Normality", "Decay", "Regret", "Shame", "Doubt",
+		"Injury", "Pain", "Clumsy", "Depression", "Curse of the Bell",
+		"Writhe", "Necronomicurse", "Bite", "Shiv":
+		// Note: Bite and Shiv can be permanent (via relics/cards) — reconcile
+		// will only mark them temporary if they appear unexpectedly mid-combat.
+		// For now include them; revisit if false positives appear.
+		return true
+	}
+	return false
+}
+
 func repeat(name string, n int, source string, floor int, rest []DeckEntry) []DeckEntry {
 	entries := make([]DeckEntry, n, n+len(rest))
 	for i := range entries {

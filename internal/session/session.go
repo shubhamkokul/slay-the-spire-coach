@@ -12,10 +12,11 @@ import (
 // ── Entry types ───────────────────────────────────────────────────────────────
 
 type DeckEntry struct {
-	Name     string
-	Upgraded bool
-	Source   string // "start", "card_reward", "shop_buy", "shop_remove", "upgrade", "event", "boon", "reconcile"
-	Floor    int
+	Name      string
+	Upgraded  bool
+	Temporary bool   // true for Status cards added during combat — purged on combat exit
+	Source    string // "start", "card_reward", "shop_buy", "shop_remove", "upgrade", "event", "boon", "reconcile"
+	Floor     int
 }
 
 func (d DeckEntry) Display() string {
@@ -166,9 +167,16 @@ func (s *Session) Update(curr state.GameState) {
 	// Enemies
 	s.syncEnemies(curr)
 
-	// Deck — reconcile from API during combat
+	// Purge temporary cards when leaving combat.
+	wasInCombat := state.IsCombat(prev.StateType) || prev.StateType == "card_select" || prev.StateType == "hand_select"
+	nowInCombat := state.IsCombat(curr.StateType) || curr.StateType == "card_select" || curr.StateType == "hand_select"
+	if wasInCombat && !nowInCombat {
+		s.purgeTempCards()
+	}
+
+	// Deck — reconcile from API during combat.
 	var deckChanges []Change
-	if state.IsCombat(curr.StateType) || curr.StateType == "card_select" || curr.StateType == "hand_select" {
+	if nowInCombat {
 		deckChanges = s.reconcileDeck(curr)
 		changes = append(changes, deckChanges...)
 	}
@@ -291,19 +299,34 @@ func (s *Session) syncEnemies(curr state.GameState) {
 }
 
 func (s *Session) reconcileDeck(curr state.GameState) []Change {
-	apiCards := make(map[string]int)
+	// Build API card map with type info from hand (has type), name-only from piles.
+	type apiCard struct {
+		count    int
+		cardType string
+	}
+	apiCards := make(map[string]*apiCard)
+
 	for _, c := range curr.Player.Hand {
 		name := c.Name
 		if c.IsUpgraded {
 			name += "+"
 		}
-		apiCards[name]++
+		if apiCards[name] == nil {
+			apiCards[name] = &apiCard{cardType: c.Type}
+		}
+		apiCards[name].count++
 	}
 	for _, c := range curr.Player.DrawPile {
-		apiCards[c.Name]++
+		if apiCards[c.Name] == nil {
+			apiCards[c.Name] = &apiCard{cardType: c.Type}
+		}
+		apiCards[c.Name].count++
 	}
 	for _, c := range curr.Player.DiscardPile {
-		apiCards[c.Name]++
+		if apiCards[c.Name] == nil {
+			apiCards[c.Name] = &apiCard{cardType: c.Type}
+		}
+		apiCards[c.Name].count++
 	}
 
 	sessionCards := make(map[string]int)
@@ -312,28 +335,52 @@ func (s *Session) reconcileDeck(curr state.GameState) []Change {
 	}
 
 	var changes []Change
-	for name, apiCount := range apiCards {
-		diff := apiCount - sessionCards[name]
+	for name, info := range apiCards {
+		diff := info.count - sessionCards[name]
 		for range diff {
 			upgraded := strings.HasSuffix(name, "+")
+			baseName := strings.TrimSuffix(name, "+")
+			temp := isTemporary(baseName, info.cardType)
 			s.Deck = append(s.Deck, DeckEntry{
-				Name:     strings.TrimSuffix(name, "+"),
-				Upgraded: upgraded,
-				Source:   "reconcile",
-				Floor:    curr.Run.Floor,
+				Name:      baseName,
+				Upgraded:  upgraded,
+				Temporary: temp,
+				Source:    "reconcile",
+				Floor:     curr.Run.Floor,
 			})
-			changes = append(changes, Change{Field: "deck", Type: "added", Detail: name + " (reconciled)"})
-			s.logEvent(curr.Run.Floor, curr.StateType, "card_added", name)
+			label := name
+			if temp {
+				label += " (temp)"
+			}
+			changes = append(changes, Change{Field: "deck", Type: "added", Detail: label + " (reconciled)"})
+			s.logEvent(curr.Run.Floor, curr.StateType, "card_added", label)
 		}
 	}
+
+	// Only check upgrades on permanent cards — skip temporaries.
 	for i, entry := range s.Deck {
-		if !entry.Upgraded && apiCards[entry.Name+"+"] > sessionCards[entry.Name+"+"] {
+		if entry.Temporary || entry.Upgraded {
+			continue
+		}
+		if ac, ok := apiCards[entry.Name+"+"]; ok && ac.count > sessionCards[entry.Name+"+"] {
 			s.Deck[i].Upgraded = true
 			changes = append(changes, Change{Field: "deck", Type: "upgraded", Detail: entry.Name})
 			s.logEvent(curr.Run.Floor, curr.StateType, "card_upgraded", entry.Name)
 		}
 	}
 	return changes
+}
+
+// purgeTempCards removes all cards marked temporary from the deck.
+// Called when transitioning out of combat so the permanent deck is clean.
+func (s *Session) purgeTempCards() {
+	kept := s.Deck[:0]
+	for _, d := range s.Deck {
+		if !d.Temporary {
+			kept = append(kept, d)
+		}
+	}
+	s.Deck = kept
 }
 
 func relicSource(stateType string) string {
@@ -410,9 +457,23 @@ func (s *Session) PrintStatus() string {
 		}
 		counts[key]++
 	}
-	fmt.Fprintf(&sb, "  Deck (%d cards)\n", len(s.Deck))
+	permCount := 0
+	for _, d := range s.Deck {
+		if !d.Temporary {
+			permCount++
+		}
+	}
+	fmt.Fprintf(&sb, "  Deck (%d cards)\n", permCount)
 	for _, name := range order {
-		fmt.Fprintf(&sb, "    %dx %s\n", counts[name], name)
+		suffix := ""
+		// Check if this card is temporary in the deck.
+		for _, d := range s.Deck {
+			if d.Display() == name && d.Temporary {
+				suffix = " (temp)"
+				break
+			}
+		}
+		fmt.Fprintf(&sb, "    %dx %s%s\n", counts[name], name, suffix)
 	}
 
 	if len(s.Enemies) > 0 {
