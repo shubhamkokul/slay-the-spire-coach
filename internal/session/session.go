@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
@@ -59,6 +60,7 @@ type Event struct {
 // ── Session ───────────────────────────────────────────────────────────────────
 
 type Session struct {
+	mu        sync.RWMutex
 	Character string
 	Act       int
 	Floor     int
@@ -69,7 +71,7 @@ type Session struct {
 	MaxHP int
 	Gold  int
 
-	// Collections — updated on every call
+	// Collections — updated on every poll
 	Deck    []DeckEntry
 	Relics  []RelicEntry
 	Potions []PotionEntry
@@ -95,6 +97,8 @@ func New(character string) *Session {
 
 // Update syncs every aspect of the session from the latest GameState.
 func (s *Session) Update(curr state.GameState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	prev := s.prev
 	defer func() { s.prev = curr }()
 
@@ -167,21 +171,20 @@ func (s *Session) detectRelicChanges(prev, curr state.GameState) {
 	for _, r := range prev.Player.Relics {
 		prevRelics[r.Name] = true
 	}
-	// Always sync the full relic list from API.
+	// Save existing sources before clearing.
+	existingSources := make(map[string]string, len(s.Relics))
+	for _, r := range s.Relics {
+		existingSources[r.Name] = r.Source
+	}
 	s.Relics = s.Relics[:0]
 	for _, r := range curr.Player.Relics {
-		source := "unknown"
+		source := existingSources[r.Name]
 		if !prevRelics[r.Name] {
 			source = relicSource(curr.StateType)
 			s.logEvent(curr.Run.Floor, curr.StateType, "relic_added", r.Name)
-		} else {
-			// Preserve source from existing entry if we have it.
-			for _, existing := range s.Relics {
-				if existing.Name == r.Name {
-					source = existing.Source
-					break
-				}
-			}
+		}
+		if source == "" {
+			source = "unknown"
 		}
 		s.Relics = append(s.Relics, RelicEntry{Name: r.Name, Source: source, Floor: curr.Run.Floor})
 	}
@@ -259,6 +262,8 @@ func (s *Session) logEvent(floor int, screen, eventType, detail string) {
 // ── Display ───────────────────────────────────────────────────────────────────
 
 func (s *Session) PrintStatus() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var sb strings.Builder
 
 	fmt.Fprintf(&sb, "\n%s\n", strings.Repeat("═", 48))
@@ -330,6 +335,8 @@ func (s *Session) PrintStatus() string {
 }
 
 func (s *Session) PrintDeck() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var sb strings.Builder
 	counts := make(map[string]int)
 	order := []string{}

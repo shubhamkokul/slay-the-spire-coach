@@ -79,8 +79,13 @@ func main() {
 			fmt.Print(sts2.Session.PrintStatus())
 		case "deck":
 			fmt.Print(sts2.Session.PrintDeck())
+		case "debug":
+			fmt.Printf("relics(%d): %+v\n", len(sts2.Session.Relics), sts2.Session.Relics)
+			fmt.Printf("potions(%d): %+v\n", len(sts2.Session.Potions), sts2.Session.Potions)
+			fmt.Printf("deck(%d)\n", len(sts2.Session.Deck))
+			fmt.Printf("events(%d): %+v\n", len(sts2.Session.Events), sts2.Session.Events)
 		default:
-			fmt.Println("Commands: Enter (status), deck, new")
+			fmt.Println("Commands: Enter (status), deck, debug, new")
 		}
 	}
 }
