@@ -47,9 +47,9 @@ func New() (*Client, error) {
 }
 
 // Advise gives state-specific advice and starts a fresh conversation thread.
-// Follow-up questions via Ask will have this advice in context.
-func (c *Client) Advise(ctx context.Context, trigger *state.Trigger) error {
-	userMsg := prompt.Build(trigger)
+// recentEvents is a compact string of recent run changes from the session log.
+func (c *Client) Advise(ctx context.Context, trigger *state.Trigger, recentEvents string) error {
+	userMsg := prompt.Build(trigger, recentEvents)
 	sys := prompt.System(trigger.State.StateType)
 
 	c.sysPrompt = sys

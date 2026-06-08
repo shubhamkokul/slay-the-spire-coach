@@ -231,12 +231,15 @@ func BuildQuestion(question string, gs state.GameState, raw json.RawMessage) str
 	return fmt.Sprintf("Question: %s\n\nCurrent game state:\n%s", question, gameData)
 }
 
-func Build(trigger *state.Trigger) string {
+func Build(trigger *state.Trigger, recentEvents string) string {
 	var gameData string
 	if state.IsCombat(trigger.State.StateType) {
 		gameData = buildCombatCompact(trigger.State)
 	} else {
 		gameData = buildNonCombatCompact(trigger.State, trigger.Raw)
+	}
+	if recentEvents != "" {
+		return fmt.Sprintf("Trigger: %s\n\nRecent run events:\n%s\n\nState:\n%s", trigger.Reason, recentEvents, gameData)
 	}
 	return fmt.Sprintf("Trigger: %s\n\nState:\n%s", trigger.Reason, gameData)
 }

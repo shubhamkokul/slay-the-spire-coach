@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/shubhamkokul/slay-the-spire-coach/internal/claude"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/client"
 	"github.com/shubhamkokul/slay-the-spire-coach/internal/session"
+	"github.com/shubhamkokul/slay-the-spire-coach/internal/state"
 )
 
 func main() {
@@ -26,7 +28,16 @@ func main() {
 	store := session.NewMemoryStore()
 	sts2 := client.New(*addr, store)
 
-	// Wait for mod to be reachable.
+	ai, err := claude.New()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer func() {
+		fmt.Println("\n" + ai.SessionSummary())
+		ai.Close()
+	}()
+
 	for {
 		if err := sts2.Ping(); err == nil {
 			break
@@ -37,15 +48,16 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Background poller — keeps session and store current without any user input.
 	sts2.Poll(ctx)
 
-	fmt.Println("Ready. Session updating in background every 2s.")
-	fmt.Println("  Enter     → full status snapshot")
-	fmt.Println("  deck      → deck only")
-	fmt.Println("  history   → version log of every change this run")
-	fmt.Println("  new       → reset session")
-	fmt.Println("  Ctrl+C    → quit")
+	fmt.Println("Ready. Session updating every 2s.")
+	fmt.Println("  Enter       → advice")
+	fmt.Println("  status      → full session snapshot")
+	fmt.Println("  deck        → deck only")
+	fmt.Println("  history     → version log")
+	fmt.Println("  new         → reset session")
+	fmt.Println("  Type text   → ask a question")
+	fmt.Println("  Ctrl+C      → quit")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
@@ -66,29 +78,58 @@ func main() {
 
 		if line == "new" {
 			sts2.ResetSession()
-			fmt.Println("Session reset — will reinitialize on next poll.")
+			fmt.Println("Session reset.")
 			continue
 		}
 
-		if sts2.Session == nil {
-			fmt.Println("No active session yet — waiting for game state...")
+		curr, raw, err := sts2.GetState()
+		if err != nil {
+			log.Printf("error: %v", err)
+			continue
+		}
+
+		sess := sts2.Session
+		if sess == nil {
+			fmt.Println("No active session — start a run first.")
 			continue
 		}
 
 		switch line {
 		case "":
-			fmt.Print(sts2.Session.PrintStatus())
+			trigger := &state.Trigger{
+				Reason: curr.StateType,
+				State:  curr,
+				Raw:    raw,
+			}
+			if err := ai.Advise(ctx, trigger, sess.RecentEvents(5)); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("claude error: %v", err)
+			}
+
+		case "status":
+			fmt.Print(sess.PrintStatus())
+
 		case "deck":
-			fmt.Print(sts2.Session.PrintDeck())
+			fmt.Print(sess.PrintDeck())
+
 		case "history":
-			fmt.Print(sts2.Session.PrintHistory())
+			fmt.Print(sess.PrintHistory())
+
 		case "debug":
-			fmt.Printf("version: %d\n", sts2.Session.Version)
-			fmt.Printf("relics(%d): %+v\n", len(sts2.Session.Relics), sts2.Session.Relics)
-			fmt.Printf("potions(%d): %+v\n", len(sts2.Session.Potions), sts2.Session.Potions)
-			fmt.Printf("deck(%d)\n", len(sts2.Session.Deck))
+			fmt.Printf("version: %d\n", sess.Version)
+			fmt.Printf("relics(%d): %+v\n", len(sess.Relics), sess.Relics)
+			fmt.Printf("potions(%d): %+v\n", len(sess.Potions), sess.Potions)
+			fmt.Printf("deck(%d)\n", len(sess.Deck))
+
 		default:
-			fmt.Println("Commands: Enter (status), deck, history, debug, new")
+			if err := ai.Ask(ctx, line, curr, raw); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				log.Printf("claude error: %v", err)
+			}
 		}
 	}
 }

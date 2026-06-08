@@ -645,6 +645,31 @@ func (s *Session) PrintHistory() string {
 	return sb.String()
 }
 
+// RecentEvents returns the last N notable changes as a compact string
+// for inclusion in Claude prompts as run context.
+func (s *Session) RecentEvents(n int) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.VersionLog) == 0 {
+		return ""
+	}
+	start := max(0, len(s.VersionLog)-n)
+	var parts []string
+	for _, v := range s.VersionLog[start:] {
+		for _, c := range v.Changes {
+			// Only surface meaningful events — skip hp/gold noise.
+			if c.Field == "deck" || c.Field == "relic" || c.Field == "potion" {
+				parts = append(parts, fmt.Sprintf("Floor %d: %s %s %s", v.Floor, c.Field, c.Type, c.Detail))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n")
+}
+
 func (s *Session) DeckNames() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
